@@ -447,3 +447,117 @@ struct StatusDot: View {
             }
     }
 }
+
+// MARK: - Toast Window
+
+class ToastWindow {
+    private static var window: NSWindow?
+    private static var hideTask: DispatchWorkItem?
+
+    static func show(presetName: String, windowCount: Int) {
+        // Cancel any pending hide
+        hideTask?.cancel()
+
+        // Create toast content
+        let toastView = ToastView(presetName: presetName, windowCount: windowCount)
+        let hostingView = NSHostingView(rootView: toastView)
+        hostingView.frame = NSRect(x: 0, y: 0, width: 280, height: 80)
+
+        // Create or reuse window
+        if window == nil {
+            let toast = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 280, height: 80),
+                styleMask: [.borderless],
+                backing: .buffered,
+                defer: false
+            )
+            toast.isOpaque = false
+            toast.backgroundColor = .clear
+            toast.level = .floating
+            toast.collectionBehavior = [.canJoinAllSpaces, .transient]
+            toast.ignoresMouseEvents = true
+            window = toast
+        }
+
+        window?.contentView = hostingView
+
+        // Position at top center of main screen
+        if let screen = NSScreen.main {
+            let screenFrame = screen.visibleFrame
+            let x = screenFrame.midX - 140
+            let y = screenFrame.maxY - 120
+            window?.setFrameOrigin(NSPoint(x: x, y: y))
+        }
+
+        // Show with animation
+        window?.alphaValue = 0
+        window?.orderFront(nil)
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            window?.animator().alphaValue = 1
+        }
+
+        // Schedule hide
+        let task = DispatchWorkItem {
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.3
+                context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                window?.animator().alphaValue = 0
+            }, completionHandler: {
+                window?.orderOut(nil)
+            })
+        }
+        hideTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8, execute: task)
+    }
+}
+
+struct ToastView: View {
+    let presetName: String
+    let windowCount: Int
+
+    var body: some View {
+        HStack(spacing: 14) {
+            // Success icon
+            ZStack {
+                Circle()
+                    .fill(Color.blueprintCyan.opacity(0.2))
+                    .frame(width: 44, height: 44)
+
+                Image(systemName: "checkmark")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundColor(.blueprintCyan)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("PRESET APPLIED")
+                    .font(BlueprintFont.mono(9, weight: .semibold))
+                    .foregroundColor(.blueprintCyan)
+                    .tracking(1)
+
+                Text(presetName)
+                    .font(BlueprintFont.display(15, weight: .semibold))
+                    .foregroundColor(.blueprintText)
+                    .lineLimit(1)
+
+                Text("\(windowCount) window\(windowCount == 1 ? "" : "s") arranged")
+                    .font(BlueprintFont.mono(10))
+                    .foregroundColor(.blueprintTextDim)
+            }
+
+            Spacer()
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.blueprintDeep)
+                .shadow(color: .black.opacity(0.3), radius: 20, y: 8)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.blueprintCyan.opacity(0.3), lineWidth: 1)
+        )
+    }
+}

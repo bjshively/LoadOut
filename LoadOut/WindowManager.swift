@@ -217,10 +217,52 @@ class WindowManager: ObservableObject {
         persistPresets()
     }
 
+    func renamePreset(_ preset: Preset, to newName: String) {
+        guard let index = presets.firstIndex(where: { $0.id == preset.id }) else { return }
+        presets[index].name = newName
+        persistPresets()
+    }
+
+    func updatePresetPositions(_ preset: Preset) {
+        guard let index = presets.firstIndex(where: { $0.id == preset.id }) else { return }
+
+        // Recapture window positions for the apps in this preset
+        var updatedWindows: [WindowInfo] = []
+        let workspace = NSWorkspace.shared
+
+        for existingWindow in preset.windows {
+            // Find the running app matching this window's bundle ID
+            if let app = workspace.runningApplications.first(where: {
+                $0.bundleIdentifier == existingWindow.bundleIdentifier
+            }) {
+                let runningApp = RunningApp(
+                    id: app.processIdentifier,
+                    name: app.localizedName ?? existingWindow.appName,
+                    bundleIdentifier: app.bundleIdentifier,
+                    icon: app.icon
+                )
+                if let newPosition = captureWindowPosition(for: runningApp) {
+                    updatedWindows.append(newPosition)
+                } else {
+                    // App is running but couldn't capture - keep old position
+                    updatedWindows.append(existingWindow)
+                }
+            } else {
+                // App not running - keep old position
+                updatedWindows.append(existingWindow)
+            }
+        }
+
+        presets[index].windows = updatedWindows
+        persistPresets()
+    }
+
     func applyPreset(_ preset: Preset) {
         for windowInfo in preset.windows {
             applyWindowPosition(windowInfo)
         }
+        // Show feedback toast
+        ToastWindow.show(presetName: preset.name, windowCount: preset.windows.count)
     }
 
     private func applyWindowPosition(_ info: WindowInfo) {

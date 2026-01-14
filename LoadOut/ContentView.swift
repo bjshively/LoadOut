@@ -13,6 +13,7 @@ struct ContentView: View {
     @State private var presetName: String = ""
     @State private var showingSaveSheet: Bool = false
     @State private var showingSettings: Bool = false
+    @State private var editingPreset: Preset?
     @State private var hoveredPresetId: UUID?
     @State private var appearAnimation = false
     @State private var draggingPreset: Preset?
@@ -120,6 +121,9 @@ struct ContentView: View {
                                         onApply: {
                                             windowManager.applyPreset(preset)
                                         },
+                                        onEdit: {
+                                            editingPreset = preset
+                                        },
                                         onDelete: {
                                             withAnimation(.easeOut(duration: 0.2)) {
                                                 windowManager.deletePreset(preset)
@@ -180,6 +184,14 @@ struct ContentView: View {
         .sheet(isPresented: $showingSettings) {
             BlueprintSettingsSheet(windowManager: windowManager) {
                 showingSettings = false
+            }
+        }
+        .sheet(item: $editingPreset) { preset in
+            BlueprintEditPresetSheet(
+                preset: preset,
+                windowManager: windowManager
+            ) {
+                editingPreset = nil
             }
         }
     }
@@ -429,6 +441,7 @@ struct BlueprintPresetCard: View {
     let isHovered: Bool
     var isDragging: Bool = false
     let onApply: () -> Void
+    let onEdit: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
@@ -450,7 +463,7 @@ struct BlueprintPresetCard: View {
 
                 // Action buttons (visible on hover)
                 if isHovered {
-                    HStack(spacing: 8) {
+                    HStack(spacing: 6) {
                         Button(action: onApply) {
                             HStack(spacing: 4) {
                                 Image(systemName: "play.fill")
@@ -466,6 +479,17 @@ struct BlueprintPresetCard: View {
                         }
                         .buttonStyle(.plain)
 
+                        Button(action: onEdit) {
+                            Image(systemName: "pencil")
+                                .font(.system(size: 11))
+                                .foregroundColor(.blueprintCyan)
+                                .frame(width: 28, height: 28)
+                                .background(Color.blueprintCyan.opacity(0.1))
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Edit preset")
+
                         Button(action: onDelete) {
                             Image(systemName: "trash")
                                 .font(.system(size: 11))
@@ -475,6 +499,7 @@ struct BlueprintPresetCard: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 4))
                         }
                         .buttonStyle(.plain)
+                        .help("Delete preset")
                     }
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 }
@@ -518,22 +543,6 @@ struct BlueprintPresetCard: View {
                 Spacer()
             }
             .padding(12)
-
-            // Coordinate bar (visible on hover)
-            if isHovered, let firstWindow = preset.windows.first {
-                HStack {
-                    CoordinateLabel(
-                        x: firstWindow.x,
-                        y: firstWindow.y,
-                        width: firstWindow.width,
-                        height: firstWindow.height
-                    )
-                    Spacer()
-                }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 10)
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
-            }
         }
         .background(
             RoundedRectangle(cornerRadius: 6)
@@ -805,6 +814,160 @@ struct BlueprintSaveSheet: View {
         }
         .frame(width: 420, height: 340)
         .onAppear {
+            isTextFieldFocused = true
+        }
+    }
+}
+
+// MARK: - Edit Preset Sheet
+
+struct BlueprintEditPresetSheet: View {
+    let preset: Preset
+    @ObservedObject var windowManager: WindowManager
+    let onDismiss: () -> Void
+
+    @State private var editedName: String = ""
+    @State private var showingUpdateConfirmation = false
+    @FocusState private var isTextFieldFocused: Bool
+
+    var body: some View {
+        ZStack {
+            // Background
+            Color.blueprintDeep
+                .ignoresSafeArea()
+
+            BlueprintGridBackground(showCrosshair: false)
+                .opacity(0.5)
+                .ignoresSafeArea()
+
+            VStack(spacing: 24) {
+                // Header
+                VStack(spacing: 8) {
+                    Text("EDIT PRESET")
+                        .font(BlueprintFont.display(16, weight: .bold))
+                        .foregroundColor(.blueprintText)
+                        .tracking(2)
+
+                    Text("Rename or update window positions")
+                        .font(BlueprintFont.mono(11))
+                        .foregroundColor(.blueprintTextDim)
+                }
+
+                // Preview
+                ScreenPreviewView(windows: preset.windows)
+                    .frame(width: 160, height: 100)
+
+                // Name input
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("PRESET NAME")
+                        .font(BlueprintFont.mono(9, weight: .semibold))
+                        .foregroundColor(.blueprintCyan)
+                        .tracking(1)
+
+                    TextField("", text: $editedName)
+                        .textFieldStyle(.plain)
+                        .font(BlueprintFont.display(14))
+                        .foregroundColor(.blueprintText)
+                        .padding(12)
+                        .background(Color.blueprintLight.opacity(0.5))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(
+                                    isTextFieldFocused ? Color.blueprintCyan : Color.blueprintCyan.opacity(0.3),
+                                    lineWidth: isTextFieldFocused ? 1.5 : 0.5
+                                )
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .focused($isTextFieldFocused)
+                }
+                .frame(width: 320)
+
+                // Update positions button
+                Button {
+                    windowManager.updatePresetPositions(preset)
+                    showingUpdateConfirmation = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        showingUpdateConfirmation = false
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: showingUpdateConfirmation ? "checkmark" : "arrow.triangle.2.circlepath")
+                            .font(.system(size: 12))
+                        Text(showingUpdateConfirmation ? "POSITIONS UPDATED" : "UPDATE POSITIONS FROM CURRENT")
+                            .font(BlueprintFont.mono(10, weight: .medium))
+                    }
+                    .foregroundColor(showingUpdateConfirmation ? .blueprintCyan : .blueprintText)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(showingUpdateConfirmation ? Color.blueprintCyan.opacity(0.2) : Color.blueprintLight.opacity(0.5))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.blueprintCyan.opacity(0.3), lineWidth: 0.5)
+                    )
+                }
+                .buttonStyle(.plain)
+
+                // App list
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("APPS IN PRESET")
+                        .font(BlueprintFont.mono(9, weight: .semibold))
+                        .foregroundColor(.blueprintTextDim)
+                        .tracking(0.5)
+
+                    VStack(spacing: 4) {
+                        ForEach(preset.windows) { window in
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(Color.blueprintCyan.opacity(0.5))
+                                    .frame(width: 6, height: 6)
+                                Text(window.appName)
+                                    .font(BlueprintFont.mono(10))
+                                    .foregroundColor(.blueprintText)
+                                Spacer()
+                                Text("\(Int(window.width))×\(Int(window.height))")
+                                    .font(BlueprintFont.mono(9))
+                                    .foregroundColor(.blueprintTextDim)
+                            }
+                        }
+                    }
+                }
+                .frame(width: 320)
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.blueprintLight.opacity(0.3))
+                )
+
+                Spacer()
+
+                // Buttons
+                HStack(spacing: 12) {
+                    Button("CANCEL") {
+                        onDismiss()
+                    }
+                    .buttonStyle(BlueprintSecondaryButton())
+                    .keyboardShortcut(.cancelAction)
+
+                    Button("SAVE CHANGES") {
+                        let trimmedName = editedName.trimmingCharacters(in: .whitespaces)
+                        if !trimmedName.isEmpty && trimmedName != preset.name {
+                            windowManager.renamePreset(preset, to: trimmedName)
+                        }
+                        onDismiss()
+                    }
+                    .buttonStyle(BlueprintPrimaryButton())
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(editedName.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            .padding(32)
+        }
+        .frame(width: 420, height: 520)
+        .onAppear {
+            editedName = preset.name
             isTextFieldFocused = true
         }
     }
