@@ -170,9 +170,9 @@ struct ContentView: View {
             BlueprintSaveSheet(
                 presetName: $presetName,
                 selectedApps: windowManager.runningApps.filter { $0.isSelected }
-            ) {
+            ) { launchItems in
                 if !presetName.trimmingCharacters(in: .whitespaces).isEmpty {
-                    windowManager.savePreset(name: presetName)
+                    windowManager.savePreset(name: presetName, launchItems: launchItems)
                     presetName = ""
                     showingSaveSheet = false
                 }
@@ -710,10 +710,13 @@ struct BlueprintToggle: View {
 struct BlueprintSaveSheet: View {
     @Binding var presetName: String
     let selectedApps: [RunningApp]
-    let onSave: () -> Void
+    let onSave: ([LaunchItem]) -> Void
     let onCancel: () -> Void
 
-    @FocusState private var isTextFieldFocused: Bool
+    @State private var launchItems: [LaunchItem] = []
+    @State private var newLaunchItem: String = ""
+    @FocusState private var isNameFocused: Bool
+    @FocusState private var isLaunchItemFocused: Bool
 
     var body: some View {
         ZStack {
@@ -725,7 +728,7 @@ struct BlueprintSaveSheet: View {
                 .opacity(0.5)
                 .ignoresSafeArea()
 
-            VStack(spacing: 24) {
+            VStack(spacing: 0) {
                 // Header
                 VStack(spacing: 8) {
                     Text("SAVE PRESET")
@@ -733,10 +736,11 @@ struct BlueprintSaveSheet: View {
                         .foregroundColor(.blueprintText)
                         .tracking(2)
 
-                    Text("Capture current window positions for \(selectedApps.count) app\(selectedApps.count == 1 ? "" : "s")")
+                    Text("Capture window positions for \(selectedApps.count) app\(selectedApps.count == 1 ? "" : "s")")
                         .font(BlueprintFont.mono(11))
                         .foregroundColor(.blueprintTextDim)
                 }
+                .padding(.bottom, 16)
 
                 // Selected apps preview
                 HStack(spacing: -8) {
@@ -767,32 +771,140 @@ struct BlueprintSaveSheet: View {
                             )
                     }
                 }
+                .padding(.bottom, 20)
 
-                // Name input
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("PRESET NAME")
-                        .font(BlueprintFont.mono(9, weight: .semibold))
-                        .foregroundColor(.blueprintCyan)
-                        .tracking(1)
+                ScrollView {
+                    VStack(spacing: 16) {
+                        // Name input
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("PRESET NAME")
+                                .font(BlueprintFont.mono(9, weight: .semibold))
+                                .foregroundColor(.blueprintCyan)
+                                .tracking(1)
 
-                    TextField("", text: $presetName, prompt: Text("e.g., Development, Design, Communication")
-                        .foregroundColor(.blueprintTextDim))
-                        .textFieldStyle(.plain)
-                        .font(BlueprintFont.display(14))
-                        .foregroundColor(.blueprintText)
-                        .padding(12)
-                        .background(Color.blueprintLight.opacity(0.5))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(
-                                    isTextFieldFocused ? Color.blueprintCyan : Color.blueprintCyan.opacity(0.3),
-                                    lineWidth: isTextFieldFocused ? 1.5 : 0.5
+                            TextField("", text: $presetName, prompt: Text("e.g., Development, Design, Communication")
+                                .foregroundColor(.blueprintTextDim))
+                                .textFieldStyle(.plain)
+                                .font(BlueprintFont.display(14))
+                                .foregroundColor(.blueprintText)
+                                .padding(12)
+                                .background(Color.blueprintLight.opacity(0.5))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .stroke(
+                                            isNameFocused ? Color.blueprintCyan : Color.blueprintCyan.opacity(0.3),
+                                            lineWidth: isNameFocused ? 1.5 : 0.5
+                                        )
                                 )
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                                .focused($isNameFocused)
+                        }
+
+                        // Launch Items section
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Text("LAUNCH ITEMS")
+                                    .font(BlueprintFont.mono(9, weight: .semibold))
+                                    .foregroundColor(.blueprintCyan)
+                                    .tracking(1)
+
+                                Spacer()
+
+                                Text("Optional")
+                                    .font(BlueprintFont.mono(8))
+                                    .foregroundColor(.blueprintTextDim)
+                            }
+
+                            Text("Add URLs or file paths to open with this preset")
+                                .font(BlueprintFont.mono(9))
+                                .foregroundColor(.blueprintTextDim)
+
+                            // Add new item
+                            HStack(spacing: 8) {
+                                TextField("", text: $newLaunchItem, prompt: Text("https://... or ~/path/to/file")
+                                    .foregroundColor(.blueprintTextDim))
+                                    .textFieldStyle(.plain)
+                                    .font(BlueprintFont.mono(11))
+                                    .foregroundColor(.blueprintText)
+                                    .padding(10)
+                                    .background(Color.blueprintLight.opacity(0.5))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 4)
+                                            .stroke(
+                                                isLaunchItemFocused ? Color.blueprintCyan : Color.blueprintCyan.opacity(0.2),
+                                                lineWidth: 0.5
+                                            )
+                                    )
+                                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                                    .focused($isLaunchItemFocused)
+                                    .onSubmit {
+                                        addLaunchItem()
+                                    }
+
+                                Button {
+                                    addLaunchItem()
+                                } label: {
+                                    Image(systemName: "plus")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundColor(.blueprintDeep)
+                                        .frame(width: 32, height: 32)
+                                        .background(Color.blueprintCyan)
+                                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(newLaunchItem.trimmingCharacters(in: .whitespaces).isEmpty)
+                            }
+
+                            // List of added launch items
+                            if !launchItems.isEmpty {
+                                VStack(spacing: 6) {
+                                    ForEach(launchItems) { item in
+                                        HStack(spacing: 10) {
+                                            Image(systemName: item.icon)
+                                                .font(.system(size: 11))
+                                                .foregroundColor(.blueprintCyan)
+                                                .frame(width: 16)
+
+                                            Text(item.displayName)
+                                                .font(BlueprintFont.mono(10, weight: .medium))
+                                                .foregroundColor(.blueprintText)
+                                                .lineLimit(1)
+
+                                            Spacer()
+
+                                            Button {
+                                                launchItems.removeAll { $0.id == item.id }
+                                            } label: {
+                                                Image(systemName: "xmark")
+                                                    .font(.system(size: 9, weight: .semibold))
+                                                    .foregroundColor(.blueprintRed)
+                                                    .frame(width: 20, height: 20)
+                                                    .background(Color.blueprintRed.opacity(0.1))
+                                                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                                            }
+                                            .buttonStyle(.plain)
+                                        }
+                                        .padding(8)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 4)
+                                                .fill(Color.blueprintLight.opacity(0.3))
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        .padding(12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color.blueprintMid.opacity(0.3))
                         )
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                        .focused($isTextFieldFocused)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color.blueprintCyan.opacity(0.15), lineWidth: 0.5)
+                        )
+                    }
+                    .frame(width: 340)
                 }
-                .frame(width: 320)
 
                 // Buttons
                 HStack(spacing: 12) {
@@ -803,19 +915,27 @@ struct BlueprintSaveSheet: View {
                     .keyboardShortcut(.cancelAction)
 
                     Button("SAVE PRESET") {
-                        onSave()
+                        onSave(launchItems)
                     }
                     .buttonStyle(BlueprintPrimaryButton())
                     .keyboardShortcut(.defaultAction)
                     .disabled(presetName.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
+                .padding(.top, 20)
             }
-            .padding(32)
+            .padding(28)
         }
-        .frame(width: 420, height: 340)
+        .frame(width: 420, height: 520)
         .onAppear {
-            isTextFieldFocused = true
+            isNameFocused = true
         }
+    }
+
+    private func addLaunchItem() {
+        let trimmed = newLaunchItem.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        launchItems.append(LaunchItem(path: trimmed))
+        newLaunchItem = ""
     }
 }
 
@@ -827,8 +947,25 @@ struct BlueprintEditPresetSheet: View {
     let onDismiss: () -> Void
 
     @State private var editedName: String = ""
+    @State private var newLaunchItem: String = ""
     @State private var showingUpdateConfirmation = false
-    @FocusState private var isTextFieldFocused: Bool
+    @State private var availableApps: [RunningApp] = []
+    @FocusState private var isNameFocused: Bool
+    @FocusState private var isLaunchItemFocused: Bool
+
+    // Get the current preset from windowManager to reflect changes
+    var currentPreset: Preset {
+        windowManager.presets.first { $0.id == preset.id } ?? preset
+    }
+
+    private func updateAvailableApps() {
+        let existingBundleIds = Set(currentPreset.windows.map { $0.bundleIdentifier })
+        availableApps = windowManager.runningApps.filter { app in
+            guard let bundleId = app.bundleIdentifier else { return false }
+            // Exclude apps already in preset and apps without visible windows
+            return !existingBundleIds.contains(bundleId) && windowManager.appHasWindows(app)
+        }
+    }
 
     var body: some View {
         ZStack {
@@ -840,7 +977,7 @@ struct BlueprintEditPresetSheet: View {
                 .opacity(0.5)
                 .ignoresSafeArea()
 
-            VStack(spacing: 24) {
+            VStack(spacing: 0) {
                 // Header
                 VStack(spacing: 8) {
                     Text("EDIT PRESET")
@@ -848,100 +985,314 @@ struct BlueprintEditPresetSheet: View {
                         .foregroundColor(.blueprintText)
                         .tracking(2)
 
-                    Text("Rename or update window positions")
+                    Text("Configure preset settings and launch items")
                         .font(BlueprintFont.mono(11))
                         .foregroundColor(.blueprintTextDim)
                 }
+                .padding(.bottom, 20)
 
-                // Preview
-                ScreenPreviewView(windows: preset.windows)
-                    .frame(width: 160, height: 100)
+                ScrollView {
+                    VStack(spacing: 20) {
+                        // Name input
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("PRESET NAME")
+                                .font(BlueprintFont.mono(9, weight: .semibold))
+                                .foregroundColor(.blueprintCyan)
+                                .tracking(1)
 
-                // Name input
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("PRESET NAME")
-                        .font(BlueprintFont.mono(9, weight: .semibold))
-                        .foregroundColor(.blueprintCyan)
-                        .tracking(1)
-
-                    TextField("", text: $editedName)
-                        .textFieldStyle(.plain)
-                        .font(BlueprintFont.display(14))
-                        .foregroundColor(.blueprintText)
-                        .padding(12)
-                        .background(Color.blueprintLight.opacity(0.5))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(
-                                    isTextFieldFocused ? Color.blueprintCyan : Color.blueprintCyan.opacity(0.3),
-                                    lineWidth: isTextFieldFocused ? 1.5 : 0.5
+                            TextField("", text: $editedName)
+                                .textFieldStyle(.plain)
+                                .font(BlueprintFont.display(14))
+                                .foregroundColor(.blueprintText)
+                                .padding(12)
+                                .background(Color.blueprintLight.opacity(0.5))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .stroke(
+                                            isNameFocused ? Color.blueprintCyan : Color.blueprintCyan.opacity(0.3),
+                                            lineWidth: isNameFocused ? 1.5 : 0.5
+                                        )
                                 )
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                        .focused($isTextFieldFocused)
-                }
-                .frame(width: 320)
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                                .focused($isNameFocused)
+                        }
 
-                // Update positions button
-                Button {
-                    windowManager.updatePresetPositions(preset)
-                    showingUpdateConfirmation = true
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        showingUpdateConfirmation = false
-                    }
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: showingUpdateConfirmation ? "checkmark" : "arrow.triangle.2.circlepath")
-                            .font(.system(size: 12))
-                        Text(showingUpdateConfirmation ? "POSITIONS UPDATED" : "UPDATE POSITIONS FROM CURRENT")
-                            .font(BlueprintFont.mono(10, weight: .medium))
-                    }
-                    .foregroundColor(showingUpdateConfirmation ? .blueprintCyan : .blueprintText)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(showingUpdateConfirmation ? Color.blueprintCyan.opacity(0.2) : Color.blueprintLight.opacity(0.5))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.blueprintCyan.opacity(0.3), lineWidth: 0.5)
-                    )
-                }
-                .buttonStyle(.plain)
-
-                // App list
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("APPS IN PRESET")
-                        .font(BlueprintFont.mono(9, weight: .semibold))
-                        .foregroundColor(.blueprintTextDim)
-                        .tracking(0.5)
-
-                    VStack(spacing: 4) {
-                        ForEach(preset.windows) { window in
+                        // Update positions button
+                        Button {
+                            windowManager.updatePresetPositions(preset)
+                            showingUpdateConfirmation = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                showingUpdateConfirmation = false
+                            }
+                        } label: {
                             HStack(spacing: 8) {
-                                Circle()
-                                    .fill(Color.blueprintCyan.opacity(0.5))
-                                    .frame(width: 6, height: 6)
-                                Text(window.appName)
-                                    .font(BlueprintFont.mono(10))
-                                    .foregroundColor(.blueprintText)
+                                Image(systemName: showingUpdateConfirmation ? "checkmark" : "arrow.triangle.2.circlepath")
+                                    .font(.system(size: 12))
+                                Text(showingUpdateConfirmation ? "POSITIONS UPDATED" : "UPDATE WINDOW POSITIONS")
+                                    .font(BlueprintFont.mono(10, weight: .medium))
+                            }
+                            .foregroundColor(showingUpdateConfirmation ? .blueprintCyan : .blueprintText)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(showingUpdateConfirmation ? Color.blueprintCyan.opacity(0.2) : Color.blueprintLight.opacity(0.5))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color.blueprintCyan.opacity(0.3), lineWidth: 0.5)
+                            )
+                        }
+                        .buttonStyle(.plain)
+
+                        // Launch Items section
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Text("LAUNCH ITEMS")
+                                    .font(BlueprintFont.mono(9, weight: .semibold))
+                                    .foregroundColor(.blueprintCyan)
+                                    .tracking(1)
+
                                 Spacer()
-                                Text("\(Int(window.width))×\(Int(window.height))")
-                                    .font(BlueprintFont.mono(9))
+
+                                Text("URLs & files to open")
+                                    .font(BlueprintFont.mono(8))
                                     .foregroundColor(.blueprintTextDim)
                             }
-                        }
-                    }
-                }
-                .frame(width: 320)
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.blueprintLight.opacity(0.3))
-                )
 
-                Spacer()
+                            // Add new item
+                            HStack(spacing: 8) {
+                                TextField("", text: $newLaunchItem, prompt: Text("https://... or ~/path/to/file")
+                                    .foregroundColor(.blueprintTextDim))
+                                    .textFieldStyle(.plain)
+                                    .font(BlueprintFont.mono(11))
+                                    .foregroundColor(.blueprintText)
+                                    .padding(10)
+                                    .background(Color.blueprintLight.opacity(0.5))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 4)
+                                            .stroke(
+                                                isLaunchItemFocused ? Color.blueprintCyan : Color.blueprintCyan.opacity(0.2),
+                                                lineWidth: 0.5
+                                            )
+                                    )
+                                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                                    .focused($isLaunchItemFocused)
+                                    .onSubmit {
+                                        addLaunchItem()
+                                    }
+
+                                Button {
+                                    addLaunchItem()
+                                } label: {
+                                    Image(systemName: "plus")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundColor(.blueprintDeep)
+                                        .frame(width: 32, height: 32)
+                                        .background(Color.blueprintCyan)
+                                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(newLaunchItem.trimmingCharacters(in: .whitespaces).isEmpty)
+                            }
+
+                            // List of launch items
+                            if currentPreset.launchItems.isEmpty {
+                                HStack {
+                                    Spacer()
+                                    Text("No launch items")
+                                        .font(BlueprintFont.mono(10))
+                                        .foregroundColor(.blueprintTextDim)
+                                    Spacer()
+                                }
+                                .padding(.vertical, 12)
+                            } else {
+                                VStack(spacing: 6) {
+                                    ForEach(currentPreset.launchItems) { item in
+                                        HStack(spacing: 10) {
+                                            Image(systemName: item.icon)
+                                                .font(.system(size: 11))
+                                                .foregroundColor(.blueprintCyan)
+                                                .frame(width: 16)
+
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(item.displayName)
+                                                    .font(BlueprintFont.mono(10, weight: .medium))
+                                                    .foregroundColor(.blueprintText)
+                                                    .lineLimit(1)
+
+                                                Text(item.path)
+                                                    .font(BlueprintFont.mono(8))
+                                                    .foregroundColor(.blueprintTextDim)
+                                                    .lineLimit(1)
+                                            }
+
+                                            Spacer()
+
+                                            Button {
+                                                windowManager.removeLaunchItem(from: preset, item: item)
+                                            } label: {
+                                                Image(systemName: "xmark")
+                                                    .font(.system(size: 9, weight: .semibold))
+                                                    .foregroundColor(.blueprintRed)
+                                                    .frame(width: 20, height: 20)
+                                                    .background(Color.blueprintRed.opacity(0.1))
+                                                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                                            }
+                                            .buttonStyle(.plain)
+                                        }
+                                        .padding(8)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 4)
+                                                .fill(Color.blueprintLight.opacity(0.3))
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        .padding(12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color.blueprintMid.opacity(0.3))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color.blueprintCyan.opacity(0.15), lineWidth: 0.5)
+                        )
+
+                        // Windows in preset (with remove capability)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("WINDOWS IN PRESET")
+                                .font(BlueprintFont.mono(9, weight: .semibold))
+                                .foregroundColor(.blueprintCyan)
+                                .tracking(0.5)
+
+                            if currentPreset.windows.isEmpty {
+                                Text("No windows")
+                                    .font(BlueprintFont.mono(10))
+                                    .foregroundColor(.blueprintTextDim)
+                                    .padding(.vertical, 8)
+                            } else {
+                                VStack(spacing: 4) {
+                                    ForEach(currentPreset.windows) { window in
+                                        HStack(spacing: 8) {
+                                            Circle()
+                                                .fill(Color.blueprintCyan.opacity(0.5))
+                                                .frame(width: 6, height: 6)
+                                            Text(window.appName)
+                                                .font(BlueprintFont.mono(10))
+                                                .foregroundColor(.blueprintText)
+                                            Spacer()
+                                            Text("\(Int(window.width))×\(Int(window.height))")
+                                                .font(BlueprintFont.mono(9))
+                                                .foregroundColor(.blueprintTextDim)
+
+                                            // Remove button (only show if more than 1 window)
+                                            if currentPreset.windows.count > 1 {
+                                                Button {
+                                                    windowManager.removeWindowFromPreset(preset, window: window)
+                                                    updateAvailableApps()
+                                                } label: {
+                                                    Image(systemName: "xmark")
+                                                        .font(.system(size: 9, weight: .semibold))
+                                                        .foregroundColor(.blueprintRed)
+                                                        .frame(width: 20, height: 20)
+                                                        .background(Color.blueprintRed.opacity(0.1))
+                                                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                                                }
+                                                .buttonStyle(.plain)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .padding(12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color.blueprintLight.opacity(0.3))
+                        )
+
+                        // Add windows section
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Text("ADD WINDOWS")
+                                    .font(BlueprintFont.mono(9, weight: .semibold))
+                                    .foregroundColor(.blueprintCyan)
+                                    .tracking(1)
+
+                                Spacer()
+
+                                Button {
+                                    windowManager.refreshRunningApps()
+                                    updateAvailableApps()
+                                } label: {
+                                    Image(systemName: "arrow.clockwise")
+                                        .font(.system(size: 10))
+                                        .foregroundColor(.blueprintTextDim)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Refresh app list")
+                            }
+
+                            if availableApps.isEmpty {
+                                Text("All running apps are in this preset")
+                                    .font(BlueprintFont.mono(10))
+                                    .foregroundColor(.blueprintTextDim)
+                                    .padding(.vertical, 8)
+                            } else {
+                                VStack(spacing: 4) {
+                                    ForEach(availableApps) { app in
+                                        HStack(spacing: 10) {
+                                            // App icon
+                                            if let icon = app.icon {
+                                                Image(nsImage: icon)
+                                                    .resizable()
+                                                    .frame(width: 20, height: 20)
+                                            } else {
+                                                Image(systemName: "app.fill")
+                                                    .frame(width: 20, height: 20)
+                                                    .foregroundColor(.blueprintTextDim)
+                                            }
+
+                                            Text(app.name)
+                                                .font(BlueprintFont.mono(10))
+                                                .foregroundColor(.blueprintText)
+                                                .lineLimit(1)
+
+                                            Spacer()
+
+                                            // Add button
+                                            Button {
+                                                windowManager.addWindowToPreset(preset, from: app)
+                                                updateAvailableApps()
+                                            } label: {
+                                                Image(systemName: "plus")
+                                                    .font(.system(size: 10, weight: .semibold))
+                                                    .foregroundColor(.blueprintCyan)
+                                                    .frame(width: 24, height: 24)
+                                                    .background(Color.blueprintCyan.opacity(0.15))
+                                                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                                            }
+                                            .buttonStyle(.plain)
+                                        }
+                                        .padding(.vertical, 4)
+                                    }
+                                }
+                            }
+                        }
+                        .padding(12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color.blueprintMid.opacity(0.3))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color.blueprintCyan.opacity(0.15), lineWidth: 0.5)
+                        )
+                    }
+                    .frame(width: 340)
+                }
 
                 // Buttons
                 HStack(spacing: 12) {
@@ -951,7 +1302,7 @@ struct BlueprintEditPresetSheet: View {
                     .buttonStyle(BlueprintSecondaryButton())
                     .keyboardShortcut(.cancelAction)
 
-                    Button("SAVE CHANGES") {
+                    Button("DONE") {
                         let trimmedName = editedName.trimmingCharacters(in: .whitespaces)
                         if !trimmedName.isEmpty && trimmedName != preset.name {
                             windowManager.renamePreset(preset, to: trimmedName)
@@ -962,14 +1313,24 @@ struct BlueprintEditPresetSheet: View {
                     .keyboardShortcut(.defaultAction)
                     .disabled(editedName.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
+                .padding(.top, 20)
             }
-            .padding(32)
+            .padding(28)
         }
-        .frame(width: 420, height: 520)
+        .frame(width: 420, height: 700)
         .onAppear {
             editedName = preset.name
-            isTextFieldFocused = true
+            isNameFocused = true
+            windowManager.refreshRunningApps()
+            updateAvailableApps()
         }
+    }
+
+    private func addLaunchItem() {
+        let trimmed = newLaunchItem.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        windowManager.addLaunchItem(to: preset, path: trimmed)
+        newLaunchItem = ""
     }
 }
 

@@ -454,12 +454,12 @@ class ToastWindow {
     private static var window: NSWindow?
     private static var hideTask: DispatchWorkItem?
 
-    static func show(presetName: String, windowCount: Int) {
+    static func show(presetName: String, windowCount: Int, launchItemCount: Int = 0) {
         // Cancel any pending hide
         hideTask?.cancel()
 
         // Create toast content
-        let toastView = ToastView(presetName: presetName, windowCount: windowCount)
+        let toastView = ToastView(presetName: presetName, windowCount: windowCount, launchItemCount: launchItemCount)
         let hostingView = NSHostingView(rootView: toastView)
         hostingView.frame = NSRect(x: 0, y: 0, width: 280, height: 80)
 
@@ -517,6 +517,18 @@ class ToastWindow {
 struct ToastView: View {
     let presetName: String
     let windowCount: Int
+    var launchItemCount: Int = 0
+
+    var statusText: String {
+        var parts: [String] = []
+        if windowCount > 0 {
+            parts.append("\(windowCount) window\(windowCount == 1 ? "" : "s")")
+        }
+        if launchItemCount > 0 {
+            parts.append("\(launchItemCount) item\(launchItemCount == 1 ? "" : "s") opened")
+        }
+        return parts.joined(separator: ", ")
+    }
 
     var body: some View {
         HStack(spacing: 14) {
@@ -542,7 +554,7 @@ struct ToastView: View {
                     .foregroundColor(.blueprintText)
                     .lineLimit(1)
 
-                Text("\(windowCount) window\(windowCount == 1 ? "" : "s") arranged")
+                Text(statusText)
                     .font(BlueprintFont.mono(10))
                     .foregroundColor(.blueprintTextDim)
             }

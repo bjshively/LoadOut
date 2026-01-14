@@ -47,15 +47,96 @@ struct WindowInfo: Codable, Identifiable {
     }
 }
 
+struct LaunchItem: Codable, Identifiable, Equatable {
+    let id: UUID
+    var path: String  // URL or file path
+
+    init(path: String) {
+        self.id = UUID()
+        self.path = LaunchItem.normalizePath(path)
+    }
+
+    /// Detects if input looks like a URL and adds https:// if needed
+    private static func normalizePath(_ input: String) -> String {
+        let trimmed = input.trimmingCharacters(in: .whitespaces)
+
+        // Already has a protocol
+        if trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") {
+            return trimmed
+        }
+
+        // Check if it looks like a URL (has domain-like pattern)
+        if looksLikeURL(trimmed) {
+            return "https://\(trimmed)"
+        }
+
+        return trimmed
+    }
+
+    /// Checks if the string looks like a URL without protocol
+    private static func looksLikeURL(_ input: String) -> Bool {
+        // Common TLDs to detect
+        let tlds = [".com", ".org", ".net", ".io", ".dev", ".app", ".co", ".edu", ".gov", ".me", ".tv", ".info", ".biz", ".uk", ".ca", ".au", ".de", ".fr", ".jp"]
+
+        // Check for www. prefix
+        if input.lowercased().hasPrefix("www.") {
+            return true
+        }
+
+        // Check for common TLDs
+        let lowercased = input.lowercased()
+        for tld in tlds {
+            if lowercased.contains(tld) {
+                // Make sure it's not a file path containing these strings
+                // File paths typically start with / or ~
+                if !input.hasPrefix("/") && !input.hasPrefix("~") {
+                    return true
+                }
+            }
+        }
+
+        return false
+    }
+
+    var isURL: Bool {
+        path.hasPrefix("http://") || path.hasPrefix("https://")
+    }
+
+    var displayName: String {
+        if isURL {
+            // Extract domain from URL
+            if let url = URL(string: path), let host = url.host {
+                return host
+            }
+            return path
+        } else {
+            // Get filename from path
+            return (path as NSString).lastPathComponent
+        }
+    }
+
+    var icon: String {
+        if isURL {
+            return "globe"
+        } else if path.hasSuffix("/") {
+            return "folder"
+        } else {
+            return "doc"
+        }
+    }
+}
+
 struct Preset: Codable, Identifiable {
     let id: UUID
     var name: String
     var windows: [WindowInfo]
+    var launchItems: [LaunchItem]
 
-    init(name: String, windows: [WindowInfo]) {
+    init(name: String, windows: [WindowInfo], launchItems: [LaunchItem] = []) {
         self.id = UUID()
         self.name = name
         self.windows = windows
+        self.launchItems = launchItems
     }
 }
 
@@ -145,6 +226,19 @@ class WindowManager: ObservableObject {
             .sorted { $0.name.lowercased() < $1.name.lowercased() }
     }
 
+    func appHasWindows(_ app: RunningApp) -> Bool {
+        let appElement = AXUIElementCreateApplication(app.id)
+        var windowsRef: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
+
+        guard result == .success,
+              let windows = windowsRef as? [AXUIElement],
+              !windows.isEmpty else {
+            return false
+        }
+        return true
+    }
+
     func captureWindowPosition(for app: RunningApp) -> WindowInfo? {
         guard let bundleId = app.bundleIdentifier else { return nil }
 
@@ -198,11 +292,11 @@ class WindowManager: ObservableObject {
         return windowInfos
     }
 
-    func savePreset(name: String) {
+    func savePreset(name: String, launchItems: [LaunchItem] = []) {
         let windows = captureSelectedApps()
         guard !windows.isEmpty else { return }
 
-        let preset = Preset(name: name, windows: windows)
+        let preset = Preset(name: name, windows: windows, launchItems: launchItems)
         presets.append(preset)
         persistPresets()
 
@@ -257,12 +351,73 @@ class WindowManager: ObservableObject {
         persistPresets()
     }
 
-    func applyPreset(_ preset: Preset) {
-        for windowInfo in preset.windows {
-            applyWindowPosition(windowInfo)
+    func addWindowToPreset(_ preset: Preset, from app: RunningApp) {
+        guard let index = presets.firstIndex(where: { $0.id == preset.id }) else { return }
+
+        // Don't add duplicates
+        guard !presets[index].windows.contains(where: { $0.bundleIdentifier == app.bundleIdentifier }) else { return }
+
+        if let windowInfo = captureWindowPosition(for: app) {
+            presets[index].windows.append(windowInfo)
+            persistPresets()
         }
+    }
+
+    func removeWindowFromPreset(_ preset: Preset, window: WindowInfo) {
+        guard let index = presets.firstIndex(where: { $0.id == preset.id }) else { return }
+        presets[index].windows.removeAll { $0.id == window.id }
+        persistPresets()
+    }
+
+    func applyPreset(_ preset: Preset) {
+        // Open launch items first
+        for item in preset.launchItems {
+            openLaunchItem(item)
+        }
+
+        // Small delay to let items open before positioning
+        let delay = preset.launchItems.isEmpty ? 0.0 : 0.5
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            for windowInfo in preset.windows {
+                self.applyWindowPosition(windowInfo)
+            }
+        }
+
         // Show feedback toast
-        ToastWindow.show(presetName: preset.name, windowCount: preset.windows.count)
+        let itemCount = preset.launchItems.count
+        let windowCount = preset.windows.count
+        ToastWindow.show(presetName: preset.name, windowCount: windowCount, launchItemCount: itemCount)
+    }
+
+    private func openLaunchItem(_ item: LaunchItem) {
+        let path = item.path
+
+        // Expand tilde in paths
+        let expandedPath = (path as NSString).expandingTildeInPath
+
+        if item.isURL {
+            // Open URL
+            if let url = URL(string: path) {
+                NSWorkspace.shared.open(url)
+            }
+        } else {
+            // Open file or folder
+            let fileURL = URL(fileURLWithPath: expandedPath)
+            NSWorkspace.shared.open(fileURL)
+        }
+    }
+
+    func addLaunchItem(to preset: Preset, path: String) {
+        guard let index = presets.firstIndex(where: { $0.id == preset.id }) else { return }
+        let item = LaunchItem(path: path)
+        presets[index].launchItems.append(item)
+        persistPresets()
+    }
+
+    func removeLaunchItem(from preset: Preset, item: LaunchItem) {
+        guard let index = presets.firstIndex(where: { $0.id == preset.id }) else { return }
+        presets[index].launchItems.removeAll { $0.id == item.id }
+        persistPresets()
     }
 
     private func applyWindowPosition(_ info: WindowInfo) {
