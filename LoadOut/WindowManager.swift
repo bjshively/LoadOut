@@ -231,6 +231,7 @@ class WindowManager: ObservableObject {
                     icon: app.icon
                 )
             }
+            .filter { appHasWindows($0) } // Only show apps with visible windows
             .sorted { $0.name.lowercased() < $1.name.lowercased() }
     }
 

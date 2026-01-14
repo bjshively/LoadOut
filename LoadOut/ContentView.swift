@@ -393,6 +393,7 @@ struct BlueprintFooter: View {
                             .font(.system(size: 10))
                         Text("SAVE ALL")
                             .font(BlueprintFont.mono(10, weight: .medium))
+                            .lineLimit(1)
                     }
                     .foregroundColor(.blueprintCyan)
                     .padding(.horizontal, 12)
@@ -403,6 +404,7 @@ struct BlueprintFooter: View {
                         RoundedRectangle(cornerRadius: 6)
                             .stroke(Color.blueprintCyan.opacity(0.3), lineWidth: 0.5)
                     )
+                    .fixedSize()
                 }
                 .buttonStyle(.plain)
                 .disabled(totalCount == 0)

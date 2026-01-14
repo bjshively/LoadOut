@@ -269,6 +269,7 @@ struct BlueprintPrimaryButton: ButtonStyle {
         configuration.label
             .font(BlueprintFont.mono(11, weight: .medium))
             .foregroundColor(isEnabled ? .blueprintDeep : .blueprintTextDim)
+            .lineLimit(1)
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
             .background(
@@ -279,6 +280,7 @@ struct BlueprintPrimaryButton: ButtonStyle {
                 RoundedRectangle(cornerRadius: 4)
                     .stroke(Color.blueprintCyan.opacity(0.5), lineWidth: 0.5)
             )
+            .fixedSize()
             .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
             .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
     }
