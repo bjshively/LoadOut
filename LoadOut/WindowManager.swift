@@ -156,12 +156,20 @@ class WindowManager: ObservableObject {
         }
     }
 
+    @Published var hasSeenOnboarding: Bool {
+        didSet {
+            UserDefaults.standard.set(hasSeenOnboarding, forKey: hasSeenOnboardingKey)
+        }
+    }
+
     private let presetsKey = "savedPresets"
     private let hideDockIconKey = "hideDockIcon"
+    private let hasSeenOnboardingKey = "hasSeenOnboarding"
 
     init() {
         // Load settings before other initialization
         self.hideDockIcon = UserDefaults.standard.bool(forKey: hideDockIconKey)
+        self.hasSeenOnboarding = UserDefaults.standard.bool(forKey: hasSeenOnboardingKey)
         self.launchAtLogin = SMAppService.mainApp.status == .enabled
 
         checkAccessibilityPermissions()
@@ -580,6 +588,15 @@ class WindowManager: ObservableObject {
     func toggleSelection(for app: RunningApp) {
         if let index = runningApps.firstIndex(where: { $0.id == app.id }) {
             runningApps[index].isSelected.toggle()
+        }
+    }
+
+    func selectAllApps() {
+        for i in runningApps.indices {
+            // Only select apps that have windows
+            if appHasWindows(runningApps[i]) {
+                runningApps[i].isSelected = true
+            }
         }
     }
 }

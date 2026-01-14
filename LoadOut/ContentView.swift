@@ -5,6 +5,7 @@
 //  Blueprint-themed window layout management interface
 //
 
+import ApplicationServices
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -13,6 +14,7 @@ struct ContentView: View {
     @State private var presetName: String = ""
     @State private var showingSaveSheet: Bool = false
     @State private var showingSettings: Bool = false
+    @State private var showingOnboarding: Bool = false
     @State private var editingPreset: Preset?
     @State private var hoveredPresetId: UUID?
     @State private var appearAnimation = false
@@ -73,7 +75,13 @@ struct ContentView: View {
                     // Footer with save action
                     BlueprintFooter(
                         selectedCount: selectedCount,
-                        onSave: { showingSaveSheet = true }
+                        totalCount: windowManager.runningApps.count,
+                        onSave: { showingSaveSheet = true },
+                        onSaveAll: {
+                            // Select all apps then show save sheet
+                            windowManager.selectAllApps()
+                            showingSaveSheet = true
+                        }
                     )
                 }
                 .frame(minWidth: 300, idealWidth: 340)
@@ -165,6 +173,15 @@ struct ContentView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 appearAnimation = true
             }
+            // Show onboarding on first launch
+            if !windowManager.hasSeenOnboarding {
+                showingOnboarding = true
+            }
+        }
+        .sheet(isPresented: $showingOnboarding) {
+            BlueprintOnboardingSheet(windowManager: windowManager) {
+                showingOnboarding = false
+            }
         }
         .sheet(isPresented: $showingSaveSheet) {
             BlueprintSaveSheet(
@@ -184,6 +201,11 @@ struct ContentView: View {
         .sheet(isPresented: $showingSettings) {
             BlueprintSettingsSheet(windowManager: windowManager) {
                 showingSettings = false
+            } onShowSetup: {
+                // Small delay to let settings sheet dismiss first
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    showingOnboarding = true
+                }
             }
         }
         .sheet(item: $editingPreset) { preset in
@@ -341,7 +363,9 @@ struct BlueprintAppRow: View {
 
 struct BlueprintFooter: View {
     let selectedCount: Int
+    let totalCount: Int
     let onSave: () -> Void
+    let onSaveAll: () -> Void
 
     var body: some View {
         HStack {
@@ -351,7 +375,7 @@ struct BlueprintFooter: View {
                     StatusDot(status: .active)
                 }
 
-                Text(selectedCount > 0 ? "\(selectedCount) SELECTED" : "SELECT APPS TO CREATE PRESET")
+                Text(selectedCount > 0 ? "\(selectedCount) SELECTED" : "SELECT APPS OR SAVE ALL")
                     .font(BlueprintFont.mono(10, weight: .medium))
                     .foregroundColor(selectedCount > 0 ? .blueprintCyan : .blueprintTextDim)
                     .tracking(0.5)
@@ -359,11 +383,38 @@ struct BlueprintFooter: View {
 
             Spacer()
 
-            Button("SAVE PRESET") {
-                onSave()
+            HStack(spacing: 10) {
+                // Save All button
+                Button {
+                    onSaveAll()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "square.stack.3d.up")
+                            .font(.system(size: 10))
+                        Text("SAVE ALL")
+                            .font(BlueprintFont.mono(10, weight: .medium))
+                    }
+                    .foregroundColor(.blueprintCyan)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.blueprintCyan.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.blueprintCyan.opacity(0.3), lineWidth: 0.5)
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(totalCount == 0)
+                .help("Save all running apps as a preset")
+
+                // Save Selected button
+                Button("SAVE SELECTED") {
+                    onSave()
+                }
+                .buttonStyle(BlueprintPrimaryButton())
+                .disabled(selectedCount == 0)
             }
-            .buttonStyle(BlueprintPrimaryButton())
-            .disabled(selectedCount == 0)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
@@ -568,6 +619,7 @@ struct BlueprintPresetCard: View {
 struct BlueprintSettingsSheet: View {
     @ObservedObject var windowManager: WindowManager
     let onDismiss: () -> Void
+    let onShowSetup: () -> Void
 
     var body: some View {
         ZStack {
@@ -579,9 +631,9 @@ struct BlueprintSettingsSheet: View {
                 .opacity(0.5)
                 .ignoresSafeArea()
 
-            VStack(spacing: 24) {
+            VStack(spacing: 20) {
                 // Header
-                VStack(spacing: 8) {
+                VStack(spacing: 6) {
                     Text("SETTINGS")
                         .font(BlueprintFont.display(16, weight: .bold))
                         .foregroundColor(.blueprintText)
@@ -592,11 +644,11 @@ struct BlueprintSettingsSheet: View {
                         .foregroundColor(.blueprintTextDim)
                 }
 
-                VStack(spacing: 16) {
+                VStack(spacing: 12) {
                     // Launch at Login
                     BlueprintSettingsToggle(
                         title: "LAUNCH AT LOGIN",
-                        description: "Start LoadOut automatically when you log in",
+                        description: "Start automatically when you log in",
                         icon: "power",
                         isOn: $windowManager.launchAtLogin
                     )
@@ -604,26 +656,28 @@ struct BlueprintSettingsSheet: View {
                     // Hide Dock Icon
                     BlueprintSettingsToggle(
                         title: "MENU BAR ONLY",
-                        description: "Hide dock icon — use menu bar icon to reopen",
+                        description: "Hide dock icon, access via menu bar",
                         icon: "menubar.rectangle",
                         isOn: $windowManager.hideDockIcon
                     )
                 }
-                .padding(.horizontal, 8)
-
-                // Info about reordering
-                HStack(spacing: 8) {
-                    Image(systemName: "arrow.up.arrow.down")
-                        .font(.system(size: 11))
-                        .foregroundColor(.blueprintCyan)
-
-                    Text("Drag presets to reorder them")
-                        .font(BlueprintFont.mono(10))
-                        .foregroundColor(.blueprintTextDim)
-                }
-                .padding(.top, 8)
 
                 Spacer()
+
+                // Setup button
+                Button {
+                    onDismiss()
+                    onShowSetup()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "questionmark.circle")
+                            .font(.system(size: 11))
+                        Text("SHOW SETUP GUIDE")
+                            .font(BlueprintFont.mono(10, weight: .medium))
+                    }
+                    .foregroundColor(.blueprintTextDim)
+                }
+                .buttonStyle(.plain)
 
                 // Close button
                 Button("DONE") {
@@ -632,9 +686,10 @@ struct BlueprintSettingsSheet: View {
                 .buttonStyle(BlueprintPrimaryButton())
                 .keyboardShortcut(.defaultAction)
             }
-            .padding(32)
+            .padding(.horizontal, 28)
+            .padding(.vertical, 24)
         }
-        .frame(width: 380, height: 340)
+        .frame(width: 340, height: 300)
     }
 }
 
@@ -645,12 +700,12 @@ struct BlueprintSettingsToggle: View {
     @Binding var isOn: Bool
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             // Icon
             Image(systemName: icon)
-                .font(.system(size: 16))
+                .font(.system(size: 14))
                 .foregroundColor(isOn ? .blueprintCyan : .blueprintTextDim)
-                .frame(width: 24)
+                .frame(width: 20)
 
             // Label
             VStack(alignment: .leading, spacing: 2) {
@@ -662,14 +717,16 @@ struct BlueprintSettingsToggle: View {
                 Text(description)
                     .font(BlueprintFont.mono(9))
                     .foregroundColor(.blueprintTextDim)
+                    .lineLimit(1)
             }
 
-            Spacer()
+            Spacer(minLength: 8)
 
             // Toggle
             BlueprintToggle(isOn: $isOn)
         }
-        .padding(14)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(Color.blueprintLight.opacity(0.4))
@@ -1331,6 +1388,198 @@ struct BlueprintEditPresetSheet: View {
         guard !trimmed.isEmpty else { return }
         windowManager.addLaunchItem(to: preset, path: trimmed)
         newLaunchItem = ""
+    }
+}
+
+// MARK: - Onboarding Sheet
+
+struct BlueprintOnboardingSheet: View {
+    @ObservedObject var windowManager: WindowManager
+    let onComplete: () -> Void
+
+    @State private var permissionGranted = false
+    @State private var timer: Timer?
+
+    var body: some View {
+        ZStack {
+            // Background
+            Color.blueprintDeep
+                .ignoresSafeArea()
+
+            BlueprintGridBackground(showCrosshair: false)
+                .opacity(0.5)
+                .ignoresSafeArea()
+
+            VStack(spacing: 32) {
+                Spacer()
+
+                // App icon and title
+                VStack(spacing: 16) {
+                    // Stylized window icon
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.blueprintCyan, lineWidth: 2)
+                            .frame(width: 70, height: 50)
+
+                        HStack(spacing: 6) {
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(Color.blueprintCyan.opacity(0.3))
+                                .frame(width: 28, height: 36)
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(Color.blueprintCyan.opacity(0.5))
+                                .frame(width: 28, height: 36)
+                        }
+                    }
+
+                    Text("LOADOUT")
+                        .font(BlueprintFont.display(28, weight: .bold))
+                        .foregroundColor(.blueprintText)
+                        .tracking(4)
+
+                    Text("Save and restore your window layouts")
+                        .font(BlueprintFont.mono(12))
+                        .foregroundColor(.blueprintTextDim)
+                }
+
+                // Permission section
+                VStack(spacing: 20) {
+                    Text("SETUP REQUIRED")
+                        .font(BlueprintFont.mono(10, weight: .semibold))
+                        .foregroundColor(.blueprintCyan)
+                        .tracking(1)
+
+                    // Permission status card
+                    VStack(spacing: 16) {
+                        HStack(spacing: 14) {
+                            // Status icon
+                            ZStack {
+                                Circle()
+                                    .fill(permissionGranted ? Color.green.opacity(0.2) : Color.blueprintAmber.opacity(0.2))
+                                    .frame(width: 40, height: 40)
+
+                                Image(systemName: permissionGranted ? "checkmark.circle.fill" : "hand.raised.fill")
+                                    .font(.system(size: 20))
+                                    .foregroundColor(permissionGranted ? .green : .blueprintAmber)
+                            }
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Accessibility Permission")
+                                    .font(BlueprintFont.mono(12, weight: .semibold))
+                                    .foregroundColor(.blueprintText)
+
+                                Text(permissionGranted ? "Permission granted" : "Required to read and set window positions")
+                                    .font(BlueprintFont.mono(10))
+                                    .foregroundColor(permissionGranted ? .green : .blueprintTextDim)
+                            }
+
+                            Spacer()
+
+                            if permissionGranted {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundColor(.green)
+                            }
+                        }
+                        .padding(16)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.blueprintLight.opacity(0.4))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(permissionGranted ? Color.green.opacity(0.5) : Color.blueprintCyan.opacity(0.2), lineWidth: 1)
+                        )
+
+                        if !permissionGranted {
+                            Button {
+                                openAccessibilitySettings()
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "gear")
+                                        .font(.system(size: 12))
+                                    Text("OPEN SYSTEM SETTINGS")
+                                        .font(BlueprintFont.mono(11, weight: .semibold))
+                                }
+                                .foregroundColor(.blueprintDeep)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(Color.blueprintCyan)
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                            }
+                            .buttonStyle(.plain)
+
+                            Text("Enable LoadOut in Privacy & Security → Accessibility")
+                                .font(BlueprintFont.mono(9))
+                                .foregroundColor(.blueprintTextDim)
+                                .multilineTextAlignment(.center)
+                        }
+                    }
+                    .frame(width: 340)
+                }
+
+                Spacer()
+
+                // Continue button
+                Button {
+                    windowManager.hasSeenOnboarding = true
+                    onComplete()
+                } label: {
+                    Text(permissionGranted ? "GET STARTED" : "CONTINUE WITHOUT PERMISSION")
+                        .font(BlueprintFont.mono(11, weight: .semibold))
+                        .foregroundColor(permissionGranted ? .blueprintDeep : .blueprintTextDim)
+                        .frame(width: 280)
+                        .padding(.vertical, 12)
+                        .background(permissionGranted ? Color.blueprintCyan : Color.blueprintLight.opacity(0.3))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(permissionGranted ? Color.clear : Color.blueprintCyan.opacity(0.3), lineWidth: 0.5)
+                        )
+                }
+                .buttonStyle(.plain)
+
+                if !permissionGranted {
+                    Text("You can grant permission later from the app")
+                        .font(BlueprintFont.mono(9))
+                        .foregroundColor(.blueprintTextDim)
+                }
+
+                Spacer()
+                    .frame(height: 20)
+            }
+            .padding(32)
+        }
+        .frame(width: 440, height: 520)
+        .onAppear {
+            permissionGranted = windowManager.accessibilityEnabled
+            startPolling()
+        }
+        .onDisappear {
+            stopPolling()
+        }
+    }
+
+    private func startPolling() {
+        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+            let granted = AXIsProcessTrusted()
+            if granted != permissionGranted {
+                withAnimation(.easeOut(duration: 0.3)) {
+                    permissionGranted = granted
+                    windowManager.accessibilityEnabled = granted
+                }
+            }
+        }
+    }
+
+    private func stopPolling() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    private func openAccessibilitySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
     }
 }
 
