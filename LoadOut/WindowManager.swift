@@ -320,6 +320,11 @@ class WindowManager: ObservableObject {
         persistPresets()
     }
 
+    func sortPresetsByName() {
+        presets.sort { $0.name.lowercased() < $1.name.lowercased() }
+        persistPresets()
+    }
+
     func renamePreset(_ preset: Preset, to newName: String) {
         guard let index = presets.firstIndex(where: { $0.id == preset.id }) else { return }
         presets[index].name = newName

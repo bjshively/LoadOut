@@ -105,16 +105,37 @@ struct ContentView: View {
                     if windowManager.presets.isEmpty {
                         EmptyPresetsView()
                     } else {
-                        // Drag hint
+                        // Toolbar with drag hint and sort button
                         if windowManager.presets.count > 1 {
-                            HStack(spacing: 6) {
-                                Image(systemName: "arrow.up.arrow.down")
-                                    .font(.system(size: 9))
-                                Text("DRAG TO REORDER")
-                                    .font(BlueprintFont.mono(8, weight: .medium))
-                                    .tracking(0.5)
+                            HStack {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "arrow.up.arrow.down")
+                                        .font(.system(size: 9))
+                                    Text("DRAG TO REORDER")
+                                        .font(BlueprintFont.mono(8, weight: .medium))
+                                        .tracking(0.5)
+                                }
+                                .foregroundColor(.blueprintTextDim)
+
+                                Spacer()
+
+                                Button {
+                                    withAnimation(.easeOut(duration: 0.2)) {
+                                        windowManager.sortPresetsByName()
+                                    }
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "textformat.abc")
+                                            .font(.system(size: 9))
+                                        Text("SORT A-Z")
+                                            .font(BlueprintFont.mono(8, weight: .medium))
+                                            .tracking(0.5)
+                                    }
+                                    .foregroundColor(.blueprintCyan)
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .foregroundColor(.blueprintTextDim)
+                            .padding(.horizontal, 12)
                             .padding(.top, 8)
                             .padding(.bottom, 4)
                         }
