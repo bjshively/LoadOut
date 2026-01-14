@@ -8,6 +8,8 @@
 import AppKit
 import ApplicationServices
 import Combine
+import ServiceManagement
+import SwiftUI
 
 struct RunningApp: Identifiable, Hashable {
     let id: pid_t
@@ -62,12 +64,62 @@ class WindowManager: ObservableObject {
     @Published var presets: [Preset] = []
     @Published var accessibilityEnabled: Bool = false
 
+    @Published var launchAtLogin: Bool {
+        didSet { updateLaunchAtLogin() }
+    }
+
+    @Published var hideDockIcon: Bool {
+        didSet {
+            updateDockIconVisibility()
+            UserDefaults.standard.set(hideDockIcon, forKey: hideDockIconKey)
+        }
+    }
+
     private let presetsKey = "savedPresets"
+    private let hideDockIconKey = "hideDockIcon"
 
     init() {
+        // Load settings before other initialization
+        self.hideDockIcon = UserDefaults.standard.bool(forKey: hideDockIconKey)
+        self.launchAtLogin = SMAppService.mainApp.status == .enabled
+
         checkAccessibilityPermissions()
         loadPresets()
         refreshRunningApps()
+
+        // Apply dock icon setting on launch
+        updateDockIconVisibility()
+    }
+
+    // MARK: - Settings
+
+    private func updateLaunchAtLogin() {
+        do {
+            if launchAtLogin {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            print("Failed to update launch at login: \(error)")
+        }
+    }
+
+    private func updateDockIconVisibility() {
+        if hideDockIcon {
+            NSApp.setActivationPolicy(.accessory)
+        } else {
+            NSApp.setActivationPolicy(.regular)
+            // Re-activate the app to show in dock immediately
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    // MARK: - Preset Reordering
+
+    func movePreset(from source: IndexSet, to destination: Int) {
+        presets.move(fromOffsets: source, toOffset: destination)
+        persistPresets()
     }
 
     func checkAccessibilityPermissions() {

@@ -6,13 +6,16 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @ObservedObject var windowManager: WindowManager
     @State private var presetName: String = ""
     @State private var showingSaveSheet: Bool = false
+    @State private var showingSettings: Bool = false
     @State private var hoveredPresetId: UUID?
     @State private var appearAnimation = false
+    @State private var draggingPreset: Preset?
 
     var selectedCount: Int {
         windowManager.runningApps.filter { $0.isSelected }.count
@@ -82,17 +85,38 @@ struct ContentView: View {
 
                 // Right panel - Saved Presets
                 VStack(spacing: 0) {
-                    BlueprintSectionHeader("Saved Presets", count: windowManager.presets.count)
+                    BlueprintSectionHeader(
+                        "Saved Presets",
+                        count: windowManager.presets.count,
+                        actionIcon: "gearshape"
+                    ) {
+                        showingSettings = true
+                    }
 
                     if windowManager.presets.isEmpty {
                         EmptyPresetsView()
                     } else {
+                        // Drag hint
+                        if windowManager.presets.count > 1 {
+                            HStack(spacing: 6) {
+                                Image(systemName: "arrow.up.arrow.down")
+                                    .font(.system(size: 9))
+                                Text("DRAG TO REORDER")
+                                    .font(BlueprintFont.mono(8, weight: .medium))
+                                    .tracking(0.5)
+                            }
+                            .foregroundColor(.blueprintTextDim)
+                            .padding(.top, 8)
+                            .padding(.bottom, 4)
+                        }
+
                         ScrollView {
                             LazyVStack(spacing: 8) {
                                 ForEach(Array(windowManager.presets.enumerated()), id: \.element.id) { index, preset in
                                     BlueprintPresetCard(
                                         preset: preset,
                                         isHovered: hoveredPresetId == preset.id,
+                                        isDragging: draggingPreset?.id == preset.id,
                                         onApply: {
                                             windowManager.applyPreset(preset)
                                         },
@@ -102,6 +126,15 @@ struct ContentView: View {
                                             }
                                         }
                                     )
+                                    .onDrag {
+                                        draggingPreset = preset
+                                        return NSItemProvider(object: preset.id.uuidString as NSString)
+                                    }
+                                    .onDrop(of: [.text], delegate: PresetDropDelegate(
+                                        item: preset,
+                                        items: $windowManager.presets,
+                                        draggingItem: $draggingPreset
+                                    ))
                                     .onHover { hovering in
                                         withAnimation(.easeOut(duration: 0.1)) {
                                             hoveredPresetId = hovering ? preset.id : nil
@@ -144,6 +177,41 @@ struct ContentView: View {
                 showingSaveSheet = false
             }
         }
+        .sheet(isPresented: $showingSettings) {
+            BlueprintSettingsSheet(windowManager: windowManager) {
+                showingSettings = false
+            }
+        }
+    }
+}
+
+// MARK: - Drag & Drop Delegate
+
+struct PresetDropDelegate: DropDelegate {
+    let item: Preset
+    @Binding var items: [Preset]
+    @Binding var draggingItem: Preset?
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggingItem = nil
+        return true
+    }
+
+    func dropEntered(info: DropInfo) {
+        guard let draggingItem = draggingItem,
+              draggingItem.id != item.id,
+              let fromIndex = items.firstIndex(where: { $0.id == draggingItem.id }),
+              let toIndex = items.firstIndex(where: { $0.id == item.id }) else {
+            return
+        }
+
+        withAnimation(.easeInOut(duration: 0.2)) {
+            items.move(fromOffsets: IndexSet(integer: fromIndex), toOffset: toIndex > fromIndex ? toIndex + 1 : toIndex)
+        }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
     }
 }
 
@@ -359,6 +427,7 @@ struct EmptyPresetsView: View {
 struct BlueprintPresetCard: View {
     let preset: Preset
     let isHovered: Bool
+    var isDragging: Bool = false
     let onApply: () -> Void
     let onDelete: () -> Void
 
@@ -473,11 +542,157 @@ struct BlueprintPresetCard: View {
         .overlay(
             RoundedRectangle(cornerRadius: 6)
                 .stroke(
-                    isHovered ? Color.blueprintCyan.opacity(0.4) : Color.blueprintCyan.opacity(0.15),
-                    lineWidth: isHovered ? 1 : 0.5
+                    isDragging ? Color.blueprintCyan.opacity(0.8) :
+                    (isHovered ? Color.blueprintCyan.opacity(0.4) : Color.blueprintCyan.opacity(0.15)),
+                    lineWidth: isDragging ? 2 : (isHovered ? 1 : 0.5)
                 )
         )
+        .opacity(isDragging ? 0.6 : 1.0)
+        .scaleEffect(isDragging ? 1.02 : 1.0)
         .animation(.easeOut(duration: 0.15), value: isHovered)
+        .animation(.easeOut(duration: 0.15), value: isDragging)
+    }
+}
+
+// MARK: - Settings Sheet
+
+struct BlueprintSettingsSheet: View {
+    @ObservedObject var windowManager: WindowManager
+    let onDismiss: () -> Void
+
+    var body: some View {
+        ZStack {
+            // Background
+            Color.blueprintDeep
+                .ignoresSafeArea()
+
+            BlueprintGridBackground(showCrosshair: false)
+                .opacity(0.5)
+                .ignoresSafeArea()
+
+            VStack(spacing: 24) {
+                // Header
+                VStack(spacing: 8) {
+                    Text("SETTINGS")
+                        .font(BlueprintFont.display(16, weight: .bold))
+                        .foregroundColor(.blueprintText)
+                        .tracking(2)
+
+                    Text("Configure LoadOut behavior")
+                        .font(BlueprintFont.mono(11))
+                        .foregroundColor(.blueprintTextDim)
+                }
+
+                VStack(spacing: 16) {
+                    // Launch at Login
+                    BlueprintSettingsToggle(
+                        title: "LAUNCH AT LOGIN",
+                        description: "Start LoadOut automatically when you log in",
+                        icon: "power",
+                        isOn: $windowManager.launchAtLogin
+                    )
+
+                    // Hide Dock Icon
+                    BlueprintSettingsToggle(
+                        title: "MENU BAR ONLY",
+                        description: "Hide dock icon — use menu bar icon to reopen",
+                        icon: "menubar.rectangle",
+                        isOn: $windowManager.hideDockIcon
+                    )
+                }
+                .padding(.horizontal, 8)
+
+                // Info about reordering
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.up.arrow.down")
+                        .font(.system(size: 11))
+                        .foregroundColor(.blueprintCyan)
+
+                    Text("Drag presets to reorder them")
+                        .font(BlueprintFont.mono(10))
+                        .foregroundColor(.blueprintTextDim)
+                }
+                .padding(.top, 8)
+
+                Spacer()
+
+                // Close button
+                Button("DONE") {
+                    onDismiss()
+                }
+                .buttonStyle(BlueprintPrimaryButton())
+                .keyboardShortcut(.defaultAction)
+            }
+            .padding(32)
+        }
+        .frame(width: 380, height: 340)
+    }
+}
+
+struct BlueprintSettingsToggle: View {
+    let title: String
+    let description: String
+    let icon: String
+    @Binding var isOn: Bool
+
+    var body: some View {
+        HStack(spacing: 14) {
+            // Icon
+            Image(systemName: icon)
+                .font(.system(size: 16))
+                .foregroundColor(isOn ? .blueprintCyan : .blueprintTextDim)
+                .frame(width: 24)
+
+            // Label
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(BlueprintFont.mono(10, weight: .semibold))
+                    .foregroundColor(.blueprintText)
+                    .tracking(0.5)
+
+                Text(description)
+                    .font(BlueprintFont.mono(9))
+                    .foregroundColor(.blueprintTextDim)
+            }
+
+            Spacer()
+
+            // Toggle
+            BlueprintToggle(isOn: $isOn)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.blueprintLight.opacity(0.4))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color.blueprintCyan.opacity(isOn ? 0.3 : 0.1), lineWidth: 0.5)
+        )
+    }
+}
+
+struct BlueprintToggle: View {
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.15)) {
+                isOn.toggle()
+            }
+        } label: {
+            ZStack(alignment: isOn ? .trailing : .leading) {
+                Capsule()
+                    .fill(isOn ? Color.blueprintCyan : Color.blueprintLight)
+                    .frame(width: 44, height: 24)
+
+                Circle()
+                    .fill(isOn ? Color.blueprintDeep : Color.blueprintTextDim)
+                    .frame(width: 18, height: 18)
+                    .padding(3)
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
 
