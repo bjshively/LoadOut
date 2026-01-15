@@ -656,22 +656,28 @@ class WindowManager: ObservableObject {
 
     /// Adjusts window position/size to ensure it's visible on the current screen configuration
     private func adjustWindowInfoForCurrentScreens(_ info: WindowInfo) -> WindowInfo {
-        let windowRect = CGRect(x: info.x, y: info.y, width: info.width, height: info.height)
-
-        // Check if window is at least partially visible on any screen
+        // Check if window origin is meaningfully visible on any screen
         for screen in NSScreen.screens {
-            // Convert screen frame to top-left origin coordinate system (used by Accessibility API)
             let screenFrame = screen.frame
-            let mainScreenHeight = NSScreen.screens.first?.frame.height ?? screenFrame.height
-            let flippedScreenFrame = CGRect(
-                x: screenFrame.origin.x,
-                y: mainScreenHeight - screenFrame.origin.y - screenFrame.height,
-                width: screenFrame.width,
-                height: screenFrame.height
-            )
 
-            // If window intersects with this screen, it's visible - no adjustment needed
-            if windowRect.intersects(flippedScreenFrame) {
+            // NSScreen uses bottom-left origin, Accessibility uses top-left origin
+            let mainScreenHeight = NSScreen.screens.first?.frame.height ?? screenFrame.height
+
+            // Calculate the screen bounds in Accessibility (top-left origin) coordinates
+            let screenMinX = screenFrame.origin.x
+            let screenMaxX = screenFrame.origin.x + screenFrame.width
+            let screenMinY = mainScreenHeight - screenFrame.origin.y - screenFrame.height
+            let screenMaxY = mainScreenHeight - screenFrame.origin.y
+
+            // Require at least 200px of space to the right/bottom so window is usable
+            let minVisibleSpace: CGFloat = 200
+            let effectiveMaxX = screenMaxX - minVisibleSpace
+            let effectiveMaxY = screenMaxY - minVisibleSpace
+
+            let originOnScreenX = info.x >= screenMinX && info.x <= effectiveMaxX
+            let originOnScreenY = info.y >= screenMinY && info.y <= effectiveMaxY
+
+            if originOnScreenX && originOnScreenY {
                 return info
             }
         }

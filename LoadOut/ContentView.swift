@@ -1591,6 +1591,7 @@ struct BlueprintOnboardingSheet: View {
                                 Text(permissionGranted ? "Permission granted" : "Required to read and set window positions")
                                     .font(BlueprintFont.mono(10))
                                     .foregroundColor(permissionGranted ? .green : .blueprintTextDim)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
 
                             Spacer()
