@@ -933,6 +933,31 @@ struct BlueprintSaveSheet: View {
                                 }
                                 .buttonStyle(.plain)
                                 .disabled(newLaunchItem.trimmingCharacters(in: .whitespaces).isEmpty)
+
+                                Button {
+                                    let panel = NSOpenPanel()
+                                    panel.allowsMultipleSelection = true
+                                    panel.canChooseDirectories = true
+                                    panel.canChooseFiles = true
+                                    panel.message = "Select files or folders to open with this preset"
+                                    if panel.runModal() == .OK {
+                                        for url in panel.urls {
+                                            launchItems.append(LaunchItem(path: url.path))
+                                        }
+                                    }
+                                } label: {
+                                    Image(systemName: "folder")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundColor(.blueprintCyan)
+                                        .frame(width: 32, height: 32)
+                                        .background(Color.blueprintCyan.opacity(0.15))
+                                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 4)
+                                                .stroke(Color.blueprintCyan.opacity(0.3), lineWidth: 0.5)
+                                        )
+                                }
+                                .buttonStyle(.plain)
                             }
 
                             // List of added launch items
@@ -1174,6 +1199,31 @@ struct BlueprintEditPresetSheet: View {
                                 }
                                 .buttonStyle(.plain)
                                 .disabled(newLaunchItem.trimmingCharacters(in: .whitespaces).isEmpty)
+
+                                Button {
+                                    let panel = NSOpenPanel()
+                                    panel.allowsMultipleSelection = true
+                                    panel.canChooseDirectories = true
+                                    panel.canChooseFiles = true
+                                    panel.message = "Select files or folders to open with this preset"
+                                    if panel.runModal() == .OK {
+                                        for url in panel.urls {
+                                            windowManager.addLaunchItem(to: preset, path: url.path)
+                                        }
+                                    }
+                                } label: {
+                                    Image(systemName: "folder")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundColor(.blueprintCyan)
+                                        .frame(width: 32, height: 32)
+                                        .background(Color.blueprintCyan.opacity(0.15))
+                                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 4)
+                                                .stroke(Color.blueprintCyan.opacity(0.3), lineWidth: 0.5)
+                                        )
+                                }
+                                .buttonStyle(.plain)
                             }
 
                             // List of launch items
