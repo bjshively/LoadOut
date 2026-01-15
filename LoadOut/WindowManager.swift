@@ -528,7 +528,101 @@ class WindowManager: ObservableObject {
 
         guard result == .success,
               let windows = windowsRef as? [AXUIElement],
-              let firstWindow = windows.first else {
+              !windows.isEmpty else {
+            return
+        }
+
+        // Find the main window - prefer AXMain, otherwise find the largest window
+        var mainWindow: AXUIElement?
+
+        // First, try to find a window with AXMain = true
+        for window in windows {
+            var mainRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(window, kAXMainAttribute as CFString, &mainRef) == .success,
+               let isMain = mainRef as? Bool, isMain {
+                mainWindow = window
+                break
+            }
+        }
+
+        // If no AXMain window, find the largest window (by area, excluding tiny windows like toolbars)
+        if mainWindow == nil {
+            var largestArea: CGFloat = 0
+            for window in windows {
+                var sizeRef: CFTypeRef?
+                if AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeRef) == .success {
+                    var size = CGSize.zero
+                    AXValueGetValue(sizeRef as! AXValue, .cgSize, &size)
+                    let area = size.width * size.height
+                    // Ignore tiny windows (toolbars, menubars, etc.)
+                    if size.height > 100 && area > largestArea {
+                        largestArea = area
+                        mainWindow = window
+                    }
+                }
+            }
+        }
+
+        guard let firstWindow = mainWindow else {
+            return
+        }
+
+        // Get current window position and size for full-screen detection
+        var positionRef: CFTypeRef?
+        var sizeRef: CFTypeRef?
+        var windowPosition = CGPoint.zero
+        var windowSize = CGSize.zero
+        if AXUIElementCopyAttributeValue(firstWindow, kAXPositionAttribute as CFString, &positionRef) == .success,
+           AXUIElementCopyAttributeValue(firstWindow, kAXSizeAttribute as CFString, &sizeRef) == .success {
+            AXValueGetValue(positionRef as! AXValue, .cgPoint, &windowPosition)
+            AXValueGetValue(sizeRef as! AXValue, .cgSize, &windowSize)
+        }
+
+        // Check if window is in full-screen mode
+        var isFullscreen = false
+
+        // Method 1: Check AXFullScreen attribute
+        var fullscreenRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(firstWindow, "AXFullScreen" as CFString, &fullscreenRef) == .success {
+            isFullscreen = (fullscreenRef as? Bool) ?? false
+        }
+
+        // Method 2: Check if window bounds match screen bounds (fallback detection)
+        if !isFullscreen {
+            for screen in NSScreen.screens {
+                let screenFrame = screen.frame
+                let isAtOrigin = windowPosition.x == screenFrame.origin.x && windowPosition.y == 0
+                let matchesScreenSize = abs(windowSize.width - screenFrame.size.width) < 2 &&
+                                       abs(windowSize.height - screenFrame.size.height) < 50
+                if isAtOrigin && matchesScreenSize {
+                    isFullscreen = true
+                    break
+                }
+            }
+        }
+
+        if isFullscreen {
+            // Activate the app first
+            if let app = NSRunningApplication(processIdentifier: pid) {
+                app.activate()
+            }
+
+            // Use CGEvent to send Cmd+Ctrl+F to exit full-screen
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                let keyCode: CGKeyCode = 3 // 'f' key
+                if let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true),
+                   let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false) {
+                    keyDown.flags = [.maskCommand, .maskControl]
+                    keyUp.flags = [.maskCommand, .maskControl]
+                    keyDown.post(tap: .cghidEventTap)
+                    keyUp.post(tap: .cghidEventTap)
+                }
+            }
+
+            // Wait for full-screen exit animation
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                self?.positionWindow(pid: pid, info: info)
+            }
             return
         }
 
