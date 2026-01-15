@@ -638,17 +638,76 @@ class WindowManager: ObservableObject {
     }
 
     private func setWindowFrame(window: AXUIElement, info: WindowInfo) {
+        // Adjust position to ensure window is visible on current screen configuration
+        let adjustedInfo = adjustWindowInfoForCurrentScreens(info)
+
         // Set position
-        var position = CGPoint(x: info.x, y: info.y)
+        var position = CGPoint(x: adjustedInfo.x, y: adjustedInfo.y)
         if let positionValue = AXValueCreate(.cgPoint, &position) {
             AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, positionValue)
         }
 
         // Set size
-        var size = CGSize(width: info.width, height: info.height)
+        var size = CGSize(width: adjustedInfo.width, height: adjustedInfo.height)
         if let sizeValue = AXValueCreate(.cgSize, &size) {
             AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)
         }
+    }
+
+    /// Adjusts window position/size to ensure it's visible on the current screen configuration
+    private func adjustWindowInfoForCurrentScreens(_ info: WindowInfo) -> WindowInfo {
+        let windowRect = CGRect(x: info.x, y: info.y, width: info.width, height: info.height)
+
+        // Check if window is at least partially visible on any screen
+        for screen in NSScreen.screens {
+            // Convert screen frame to top-left origin coordinate system (used by Accessibility API)
+            let screenFrame = screen.frame
+            let mainScreenHeight = NSScreen.screens.first?.frame.height ?? screenFrame.height
+            let flippedScreenFrame = CGRect(
+                x: screenFrame.origin.x,
+                y: mainScreenHeight - screenFrame.origin.y - screenFrame.height,
+                width: screenFrame.width,
+                height: screenFrame.height
+            )
+
+            // If window intersects with this screen, it's visible - no adjustment needed
+            if windowRect.intersects(flippedScreenFrame) {
+                return info
+            }
+        }
+
+        // Window is not visible on any screen - reposition to primary screen
+        guard let primaryScreen = NSScreen.main ?? NSScreen.screens.first else {
+            return info
+        }
+
+        let primaryFrame = primaryScreen.frame
+
+        // Calculate new position on primary screen, with some offset from top-left
+        let newX = primaryFrame.origin.x + 50
+        let newY: Double = 50  // Top of screen in flipped coordinates
+        var newWidth = info.width
+        var newHeight = info.height
+
+        // Ensure window fits on screen (scale down if necessary)
+        let maxWidth = primaryFrame.width - 100
+        let maxHeight = primaryFrame.height - 100
+
+        if newWidth > maxWidth {
+            newWidth = maxWidth
+        }
+        if newHeight > maxHeight {
+            newHeight = maxHeight
+        }
+
+        return WindowInfo(
+            bundleIdentifier: info.bundleIdentifier,
+            appName: info.appName,
+            x: newX,
+            y: newY,
+            width: newWidth,
+            height: newHeight
+        )
     }
 
     private func launchApp(bundleIdentifier: String, completion: @escaping (pid_t?) -> Void) {
