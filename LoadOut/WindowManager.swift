@@ -248,6 +248,36 @@ class WindowManager: ObservableObject {
         return true
     }
 
+    /// Find the main window from a list of windows - prefers AXMain, falls back to largest window
+    private func findMainWindow(from windows: [AXUIElement]) -> AXUIElement? {
+        // First, try to find a window with AXMain = true
+        for window in windows {
+            var mainRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(window, kAXMainAttribute as CFString, &mainRef) == .success,
+               let isMain = mainRef as? Bool, isMain {
+                return window
+            }
+        }
+
+        // If no AXMain window, find the largest window (by area, excluding tiny windows like toolbars)
+        var largestArea: CGFloat = 0
+        var mainWindow: AXUIElement?
+        for window in windows {
+            var sizeRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeRef) == .success {
+                var size = CGSize.zero
+                AXValueGetValue(sizeRef as! AXValue, .cgSize, &size)
+                let area = size.width * size.height
+                // Ignore tiny windows (toolbars, menubars, etc.)
+                if size.height > 100 && area > largestArea {
+                    largestArea = area
+                    mainWindow = window
+                }
+            }
+        }
+        return mainWindow
+    }
+
     func captureWindowPosition(for app: RunningApp) -> WindowInfo? {
         guard let bundleId = app.bundleIdentifier else { return nil }
 
@@ -258,15 +288,15 @@ class WindowManager: ObservableObject {
 
         guard result == .success,
               let windows = windowsRef as? [AXUIElement],
-              let firstWindow = windows.first else {
+              let mainWindow = findMainWindow(from: windows) else {
             return nil
         }
 
         var positionRef: CFTypeRef?
         var sizeRef: CFTypeRef?
 
-        AXUIElementCopyAttributeValue(firstWindow, kAXPositionAttribute as CFString, &positionRef)
-        AXUIElementCopyAttributeValue(firstWindow, kAXSizeAttribute as CFString, &sizeRef)
+        AXUIElementCopyAttributeValue(mainWindow, kAXPositionAttribute as CFString, &positionRef)
+        AXUIElementCopyAttributeValue(mainWindow, kAXSizeAttribute as CFString, &sizeRef)
 
         var position = CGPoint.zero
         var size = CGSize.zero
@@ -528,42 +558,7 @@ class WindowManager: ObservableObject {
 
         guard result == .success,
               let windows = windowsRef as? [AXUIElement],
-              !windows.isEmpty else {
-            return
-        }
-
-        // Find the main window - prefer AXMain, otherwise find the largest window
-        var mainWindow: AXUIElement?
-
-        // First, try to find a window with AXMain = true
-        for window in windows {
-            var mainRef: CFTypeRef?
-            if AXUIElementCopyAttributeValue(window, kAXMainAttribute as CFString, &mainRef) == .success,
-               let isMain = mainRef as? Bool, isMain {
-                mainWindow = window
-                break
-            }
-        }
-
-        // If no AXMain window, find the largest window (by area, excluding tiny windows like toolbars)
-        if mainWindow == nil {
-            var largestArea: CGFloat = 0
-            for window in windows {
-                var sizeRef: CFTypeRef?
-                if AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeRef) == .success {
-                    var size = CGSize.zero
-                    AXValueGetValue(sizeRef as! AXValue, .cgSize, &size)
-                    let area = size.width * size.height
-                    // Ignore tiny windows (toolbars, menubars, etc.)
-                    if size.height > 100 && area > largestArea {
-                        largestArea = area
-                        mainWindow = window
-                    }
-                }
-            }
-        }
-
-        guard let firstWindow = mainWindow else {
+              let firstWindow = findMainWindow(from: windows) else {
             return
         }
 
