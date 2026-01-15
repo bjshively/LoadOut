@@ -19,6 +19,8 @@ struct ContentView: View {
     @State private var hoveredPresetId: UUID?
     @State private var appearAnimation = false
     @State private var draggingPreset: Preset?
+    @State private var presetToDelete: Preset?
+    @State private var showingDeleteConfirmation = false
 
     var selectedCount: Int {
         windowManager.runningApps.filter { $0.isSelected }.count
@@ -154,9 +156,8 @@ struct ContentView: View {
                                             editingPreset = preset
                                         },
                                         onDelete: {
-                                            withAnimation(.easeOut(duration: 0.2)) {
-                                                windowManager.deletePreset(preset)
-                                            }
+                                            presetToDelete = preset
+                                            showingDeleteConfirmation = true
                                         }
                                     )
                                     .onDrag {
@@ -235,6 +236,23 @@ struct ContentView: View {
                 windowManager: windowManager
             ) {
                 editingPreset = nil
+            }
+        }
+        .alert("Delete Preset", isPresented: $showingDeleteConfirmation) {
+            Button("Cancel", role: .cancel) {
+                presetToDelete = nil
+            }
+            Button("Delete", role: .destructive) {
+                if let preset = presetToDelete {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        windowManager.deletePreset(preset)
+                    }
+                }
+                presetToDelete = nil
+            }
+        } message: {
+            if let preset = presetToDelete {
+                Text("Are you sure you want to delete \"\(preset.name)\"? This cannot be undone.")
             }
         }
     }
@@ -795,6 +813,7 @@ struct BlueprintSaveSheet: View {
 
     @State private var launchItems: [LaunchItem] = []
     @State private var newLaunchItem: String = ""
+    @State private var isDraggingOver: Bool = false
     @FocusState private var isNameFocused: Bool
     @FocusState private var isLaunchItemFocused: Bool
 
@@ -895,7 +914,7 @@ struct BlueprintSaveSheet: View {
                                     .foregroundColor(.blueprintTextDim)
                             }
 
-                            Text("Add URLs or file paths to open with this preset")
+                            Text("Add URLs, drag files here, or browse with the folder button")
                                 .font(BlueprintFont.mono(9))
                                 .foregroundColor(.blueprintTextDim)
 
@@ -1007,6 +1026,18 @@ struct BlueprintSaveSheet: View {
                             RoundedRectangle(cornerRadius: 6)
                                 .stroke(Color.blueprintCyan.opacity(0.15), lineWidth: 0.5)
                         )
+                        .onDrop(of: [.fileURL], isTargeted: $isDraggingOver) { providers in
+                            for provider in providers {
+                                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                                    if let url = url {
+                                        DispatchQueue.main.async {
+                                            launchItems.append(LaunchItem(path: url.path))
+                                        }
+                                    }
+                                }
+                            }
+                            return true
+                        }
                     }
                     .frame(width: 340)
                 }
@@ -1055,6 +1086,7 @@ struct BlueprintEditPresetSheet: View {
     @State private var newLaunchItem: String = ""
     @State private var showingUpdateConfirmation = false
     @State private var availableApps: [RunningApp] = []
+    @State private var isDraggingOver: Bool = false
     @FocusState private var isNameFocused: Bool
     @FocusState private var isLaunchItemFocused: Bool
 
@@ -1164,6 +1196,10 @@ struct BlueprintEditPresetSheet: View {
                                     .font(BlueprintFont.mono(8))
                                     .foregroundColor(.blueprintTextDim)
                             }
+
+                            Text("Drag files here or use the folder button to browse")
+                                .font(BlueprintFont.mono(9))
+                                .foregroundColor(.blueprintTextDim)
 
                             // Add new item
                             HStack(spacing: 8) {
@@ -1289,6 +1325,18 @@ struct BlueprintEditPresetSheet: View {
                             RoundedRectangle(cornerRadius: 6)
                                 .stroke(Color.blueprintCyan.opacity(0.15), lineWidth: 0.5)
                         )
+                        .onDrop(of: [.fileURL], isTargeted: $isDraggingOver) { providers in
+                            for provider in providers {
+                                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                                    if let url = url {
+                                        DispatchQueue.main.async {
+                                            windowManager.addLaunchItem(to: preset, path: url.path)
+                                        }
+                                    }
+                                }
+                            }
+                            return true
+                        }
 
                         // Windows in preset (with remove capability)
                         VStack(alignment: .leading, spacing: 8) {
