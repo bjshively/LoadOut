@@ -1590,6 +1590,10 @@ struct BlueprintOnboardingSheet: View {
                     permissionGranted = granted
                     windowManager.accessibilityEnabled = granted
                 }
+                // Auto-refresh running apps when permissions are granted
+                if granted {
+                    windowManager.refreshRunningApps()
+                }
             }
         }
     }
