@@ -514,6 +514,65 @@ class ToastWindow {
         hideTask = task
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.8, execute: task)
     }
+
+    static func showError(title: String, message: String) {
+        // Cancel any pending hide
+        hideTask?.cancel()
+
+        // Create toast content
+        let toastView = ErrorToastView(title: title, message: message)
+        let hostingView = NSHostingView(rootView: toastView)
+        hostingView.frame = NSRect(x: 0, y: 0, width: 280, height: 80)
+
+        // Create or reuse window
+        if window == nil {
+            let toast = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 280, height: 80),
+                styleMask: [.borderless],
+                backing: .buffered,
+                defer: false
+            )
+            toast.isOpaque = false
+            toast.backgroundColor = .clear
+            toast.level = .floating
+            toast.collectionBehavior = [.canJoinAllSpaces, .transient]
+            toast.ignoresMouseEvents = true
+            window = toast
+        }
+
+        window?.contentView = hostingView
+
+        // Position at top center of main screen
+        if let screen = NSScreen.main {
+            let screenFrame = screen.visibleFrame
+            let x = screenFrame.midX - 140
+            let y = screenFrame.maxY - 120
+            window?.setFrameOrigin(NSPoint(x: x, y: y))
+        }
+
+        // Show with animation
+        window?.alphaValue = 0
+        window?.orderFront(nil)
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            window?.animator().alphaValue = 1
+        }
+
+        // Schedule hide (longer for errors so user can read)
+        let task = DispatchWorkItem {
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.3
+                context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                window?.animator().alphaValue = 0
+            }, completionHandler: {
+                window?.orderOut(nil)
+            })
+        }
+        hideTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: task)
+    }
 }
 
 struct ToastView: View {
@@ -572,6 +631,50 @@ struct ToastView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 12)
                 .stroke(Color.blueprintCyan.opacity(0.3), lineWidth: 1)
+        )
+    }
+}
+
+struct ErrorToastView: View {
+    let title: String
+    let message: String
+
+    var body: some View {
+        HStack(spacing: 14) {
+            // Error icon
+            ZStack {
+                Circle()
+                    .fill(Color.blueprintAmber.opacity(0.2))
+                    .frame(width: 44, height: 44)
+
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundColor(.blueprintAmber)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title.uppercased())
+                    .font(BlueprintFont.mono(9, weight: .semibold))
+                    .foregroundColor(.blueprintAmber)
+                    .tracking(1)
+
+                Text(message)
+                    .font(BlueprintFont.display(13, weight: .medium))
+                    .foregroundColor(.blueprintText)
+                    .lineLimit(2)
+            }
+
+            Spacer()
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.blueprintDeep)
+                .shadow(color: .black.opacity(0.3), radius: 20, y: 8)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.blueprintAmber.opacity(0.3), lineWidth: 1)
         )
     }
 }

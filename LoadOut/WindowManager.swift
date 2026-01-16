@@ -146,8 +146,13 @@ class WindowManager: ObservableObject {
     @Published var accessibilityEnabled: Bool = false
 
     @Published var launchAtLogin: Bool {
-        didSet { updateLaunchAtLogin() }
+        didSet {
+            if !isRevertingLaunchAtLogin {
+                updateLaunchAtLogin()
+            }
+        }
     }
+    private var isRevertingLaunchAtLogin = false
 
     @Published var hideDockIcon: Bool {
         didSet {
@@ -190,7 +195,15 @@ class WindowManager: ObservableObject {
                 try SMAppService.mainApp.unregister()
             }
         } catch {
-            print("Failed to update launch at login: \(error)")
+            // Revert the toggle since it failed
+            isRevertingLaunchAtLogin = true
+            launchAtLogin = !launchAtLogin
+            isRevertingLaunchAtLogin = false
+
+            ToastWindow.showError(
+                title: "Settings Error",
+                message: "Failed to update launch at login setting"
+            )
         }
     }
 
@@ -441,13 +454,26 @@ class WindowManager: ObservableObject {
 
         if item.isURL {
             // Open URL
-            if let url = URL(string: path) {
-                NSWorkspace.shared.open(url)
+            guard let url = URL(string: path) else {
+                ToastWindow.showError(title: "Invalid URL", message: item.displayName)
+                return
+            }
+            if !NSWorkspace.shared.open(url) {
+                ToastWindow.showError(title: "Failed to Open", message: item.displayName)
             }
         } else {
+            // Check if file/folder exists
+            let fileManager = FileManager.default
+            guard fileManager.fileExists(atPath: expandedPath) else {
+                ToastWindow.showError(title: "File Not Found", message: item.displayName)
+                return
+            }
+
             // Open file or folder
             let fileURL = URL(fileURLWithPath: expandedPath)
-            NSWorkspace.shared.open(fileURL)
+            if !NSWorkspace.shared.open(fileURL) {
+                ToastWindow.showError(title: "Failed to Open", message: item.displayName)
+            }
         }
     }
 
@@ -546,6 +572,12 @@ class WindowManager: ObservableObject {
         var error: NSDictionary?
         if let appleScript = NSAppleScript(source: script) {
             appleScript.executeAndReturnError(&error)
+            if let error = error {
+                // Log AppleScript errors but don't surface to user since this is a fallback mechanism
+                #if DEBUG
+                print("AppleScript error for \(bundleIdentifier): \(error)")
+                #endif
+            }
         }
         completion()
     }
@@ -559,6 +591,9 @@ class WindowManager: ObservableObject {
         guard result == .success,
               let windows = windowsRef as? [AXUIElement],
               let firstWindow = findMainWindow(from: windows) else {
+            #if DEBUG
+            print("Could not position window for \(info.appName): no windows found after all retries")
+            #endif
             return
         }
 
