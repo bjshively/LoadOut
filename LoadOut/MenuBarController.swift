@@ -64,9 +64,11 @@ class MenuBarController {
             presetsHeader.isEnabled = false
             menu.addItem(presetsHeader)
 
-            for preset in windowManager.presets {
+            for (index, preset) in windowManager.presets.enumerated() {
+                // Show shortcut indicator for first 9 presets
+                let shortcutSuffix = index < 9 ? "  ⌃⌥\(index + 1)" : ""
                 let item = NSMenuItem(
-                    title: preset.name,
+                    title: preset.name + shortcutSuffix,
                     action: #selector(applyPreset(_:)),
                     keyEquivalent: ""
                 )

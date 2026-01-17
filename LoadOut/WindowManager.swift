@@ -35,12 +35,9 @@ struct WindowInfo: Codable, Identifiable {
     let y: Double
     let width: Double
     let height: Double
+    var windowIndex: Int        // Index in app's window list at capture time (for multi-window support)
 
-    // New fields for multi-window support
-    var windowTitle: String?    // AXTitle - document name, tab title
-    var windowIndex: Int        // Index in app's window list at capture time
-
-    init(bundleIdentifier: String, appName: String, x: Double, y: Double, width: Double, height: Double, windowTitle: String? = nil, windowIndex: Int = 0) {
+    init(bundleIdentifier: String, appName: String, x: Double, y: Double, width: Double, height: Double, windowIndex: Int = 0) {
         self.id = UUID()
         self.bundleIdentifier = bundleIdentifier
         self.appName = appName
@@ -48,7 +45,6 @@ struct WindowInfo: Codable, Identifiable {
         self.y = y
         self.width = width
         self.height = height
-        self.windowTitle = windowTitle
         self.windowIndex = windowIndex
     }
 
@@ -62,9 +58,6 @@ struct WindowInfo: Codable, Identifiable {
         y = try container.decode(Double.self, forKey: .y)
         width = try container.decode(Double.self, forKey: .width)
         height = try container.decode(Double.self, forKey: .height)
-
-        // New fields with defaults for backward compatibility
-        windowTitle = try container.decodeIfPresent(String.self, forKey: .windowTitle)
         windowIndex = try container.decodeIfPresent(Int.self, forKey: .windowIndex) ?? 0
     }
 }
@@ -308,31 +301,16 @@ class WindowManager: ObservableObject {
 
             var score = 0
 
-            // Score based on window title matching
-            if let savedTitle = info.windowTitle, !savedTitle.isEmpty {
-                var titleRef: CFTypeRef?
-                if AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleRef) == .success,
-                   let currentTitle = titleRef as? String {
-                    if currentTitle == savedTitle {
-                        score += 100  // Exact title match
-                    } else if currentTitle.contains(savedTitle) || savedTitle.contains(currentTitle) {
-                        score += 50   // Partial title match
-                    }
-                }
-            }
-
             // Score based on window index matching
             if index == info.windowIndex {
                 score += 30
             }
 
-            // Score bonus if this is the main window (for legacy presets without title)
-            if info.windowTitle == nil {
-                var mainRef: CFTypeRef?
-                if AXUIElementCopyAttributeValue(window, kAXMainAttribute as CFString, &mainRef) == .success,
-                   let isMain = mainRef as? Bool, isMain {
-                    score += 20
-                }
+            // Score bonus if this is the main window (for legacy presets)
+            var mainRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(window, kAXMainAttribute as CFString, &mainRef) == .success,
+               let isMain = mainRef as? Bool, isMain {
+                score += 20
             }
 
             // Track best match
@@ -408,13 +386,6 @@ class WindowManager: ObservableObject {
             AXValueGetValue(sizeRef as! AXValue, .cgSize, &size)
         }
 
-        // Get window title
-        var titleRef: CFTypeRef?
-        var windowTitle: String?
-        if AXUIElementCopyAttributeValue(mainWindow, kAXTitleAttribute as CFString, &titleRef) == .success {
-            windowTitle = titleRef as? String
-        }
-
         return WindowInfo(
             bundleIdentifier: bundleId,
             appName: app.name,
@@ -422,7 +393,6 @@ class WindowManager: ObservableObject {
             y: Double(position.y),
             width: Double(size.width),
             height: Double(size.height),
-            windowTitle: windowTitle,
             windowIndex: 0
         )
     }
@@ -466,13 +436,6 @@ class WindowManager: ObservableObject {
                 continue
             }
 
-            // Get window title
-            var titleRef: CFTypeRef?
-            var windowTitle: String?
-            if AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleRef) == .success {
-                windowTitle = titleRef as? String
-            }
-
             let info = WindowInfo(
                 bundleIdentifier: bundleId,
                 appName: app.name,
@@ -480,7 +443,6 @@ class WindowManager: ObservableObject {
                 y: Double(position.y),
                 width: Double(size.width),
                 height: Double(size.height),
-                windowTitle: windowTitle,
                 windowIndex: index
             )
 
@@ -575,16 +537,6 @@ class WindowManager: ObservableObject {
 
                             var score = 0
 
-                            // Score by title match
-                            if let existingTitle = existingWindow.windowTitle,
-                               let currentTitle = current.windowTitle {
-                                if existingTitle == currentTitle {
-                                    score += 100
-                                } else if existingTitle.contains(currentTitle) || currentTitle.contains(existingTitle) {
-                                    score += 50
-                                }
-                            }
-
                             // Score by index match
                             if existingWindow.windowIndex == current.windowIndex {
                                 score += 30
@@ -631,12 +583,11 @@ class WindowManager: ObservableObject {
         let newWindows = captureAllWindowPositions(for: app)
 
         for newWindow in newWindows {
-            // Check for exact duplicates (same position + same title)
+            // Check for exact duplicates (same position)
             let isDuplicate = presets[index].windows.contains { existing in
                 existing.bundleIdentifier == newWindow.bundleIdentifier &&
                 abs(existing.x - newWindow.x) < 10 &&
-                abs(existing.y - newWindow.y) < 10 &&
-                existing.windowTitle == newWindow.windowTitle
+                abs(existing.y - newWindow.y) < 10
             }
 
             if !isDuplicate {
