@@ -610,7 +610,7 @@ struct BlueprintPresetCard: View {
                 ScreenPreviewView(windows: preset.windows)
                     .frame(width: 100, height: 60)
 
-                // App names with coordinates
+                // App names with window titles
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(preset.windows.prefix(3)) { window in
                         HStack(spacing: 6) {
@@ -618,10 +618,20 @@ struct BlueprintPresetCard: View {
                                 .fill(Color.blueprintCyan.opacity(0.6))
                                 .frame(width: 4, height: 4)
 
-                            Text(window.appName)
-                                .font(BlueprintFont.mono(9))
-                                .foregroundColor(.blueprintText)
-                                .lineLimit(1)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(window.appName)
+                                    .font(BlueprintFont.mono(9))
+                                    .foregroundColor(.blueprintText)
+                                    .lineLimit(1)
+
+                                // Show window title if available
+                                if let title = window.windowTitle, !title.isEmpty {
+                                    Text(title)
+                                        .font(BlueprintFont.mono(7))
+                                        .foregroundColor(.blueprintTextDim)
+                                        .lineLimit(1)
+                                }
+                            }
                         }
                     }
 
@@ -1357,9 +1367,21 @@ struct BlueprintEditPresetSheet: View {
                                             Circle()
                                                 .fill(Color.blueprintCyan.opacity(0.5))
                                                 .frame(width: 6, height: 6)
-                                            Text(window.appName)
-                                                .font(BlueprintFont.mono(10))
-                                                .foregroundColor(.blueprintText)
+
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(window.appName)
+                                                    .font(BlueprintFont.mono(10))
+                                                    .foregroundColor(.blueprintText)
+
+                                                // Show window title if available
+                                                if let title = window.windowTitle, !title.isEmpty {
+                                                    Text(title)
+                                                        .font(BlueprintFont.mono(8))
+                                                        .foregroundColor(.blueprintTextDim)
+                                                        .lineLimit(1)
+                                                }
+                                            }
+
                                             Spacer()
                                             Text("\(Int(window.width))×\(Int(window.height))")
                                                 .font(BlueprintFont.mono(9))

@@ -36,7 +36,11 @@ struct WindowInfo: Codable, Identifiable {
     let width: Double
     let height: Double
 
-    init(bundleIdentifier: String, appName: String, x: Double, y: Double, width: Double, height: Double) {
+    // New fields for multi-window support
+    var windowTitle: String?    // AXTitle - document name, tab title
+    var windowIndex: Int        // Index in app's window list at capture time
+
+    init(bundleIdentifier: String, appName: String, x: Double, y: Double, width: Double, height: Double, windowTitle: String? = nil, windowIndex: Int = 0) {
         self.id = UUID()
         self.bundleIdentifier = bundleIdentifier
         self.appName = appName
@@ -44,6 +48,24 @@ struct WindowInfo: Codable, Identifiable {
         self.y = y
         self.width = width
         self.height = height
+        self.windowTitle = windowTitle
+        self.windowIndex = windowIndex
+    }
+
+    // Custom decoder for backward compatibility with existing presets
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        bundleIdentifier = try container.decode(String.self, forKey: .bundleIdentifier)
+        appName = try container.decode(String.self, forKey: .appName)
+        x = try container.decode(Double.self, forKey: .x)
+        y = try container.decode(Double.self, forKey: .y)
+        width = try container.decode(Double.self, forKey: .width)
+        height = try container.decode(Double.self, forKey: .height)
+
+        // New fields with defaults for backward compatibility
+        windowTitle = try container.decodeIfPresent(String.self, forKey: .windowTitle)
+        windowIndex = try container.decodeIfPresent(Int.self, forKey: .windowIndex) ?? 0
     }
 }
 
@@ -261,6 +283,70 @@ class WindowManager: ObservableObject {
         return true
     }
 
+    /// Find the best matching window for a WindowInfo using score-based matching
+    /// - Parameters:
+    ///   - info: The WindowInfo to match
+    ///   - windows: Available windows to match against
+    ///   - usedIndices: Set of window indices already matched (to avoid double-matching)
+    /// - Returns: The best matching window and its index, or nil if no match
+    private func findMatchingWindow(for info: WindowInfo, in windows: [AXUIElement], usedIndices: Set<Int>) -> (window: AXUIElement, index: Int)? {
+        var bestMatch: (window: AXUIElement, index: Int, score: Int)?
+
+        for (index, window) in windows.enumerated() {
+            // Skip already-used windows
+            guard !usedIndices.contains(index) else { continue }
+
+            // Skip tiny windows
+            var sizeRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeRef) == .success {
+                var size = CGSize.zero
+                AXValueGetValue(sizeRef as! AXValue, .cgSize, &size)
+                if size.width < 100 || size.height < 100 {
+                    continue
+                }
+            }
+
+            var score = 0
+
+            // Score based on window title matching
+            if let savedTitle = info.windowTitle, !savedTitle.isEmpty {
+                var titleRef: CFTypeRef?
+                if AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleRef) == .success,
+                   let currentTitle = titleRef as? String {
+                    if currentTitle == savedTitle {
+                        score += 100  // Exact title match
+                    } else if currentTitle.contains(savedTitle) || savedTitle.contains(currentTitle) {
+                        score += 50   // Partial title match
+                    }
+                }
+            }
+
+            // Score based on window index matching
+            if index == info.windowIndex {
+                score += 30
+            }
+
+            // Score bonus if this is the main window (for legacy presets without title)
+            if info.windowTitle == nil {
+                var mainRef: CFTypeRef?
+                if AXUIElementCopyAttributeValue(window, kAXMainAttribute as CFString, &mainRef) == .success,
+                   let isMain = mainRef as? Bool, isMain {
+                    score += 20
+                }
+            }
+
+            // Track best match
+            if bestMatch == nil || score > bestMatch!.score {
+                bestMatch = (window, index, score)
+            }
+        }
+
+        if let match = bestMatch {
+            return (match.window, match.index)
+        }
+        return nil
+    }
+
     /// Find the main window from a list of windows - prefers AXMain, falls back to largest window
     private func findMainWindow(from windows: [AXUIElement]) -> AXUIElement? {
         // First, try to find a window with AXMain = true
@@ -322,23 +408,95 @@ class WindowManager: ObservableObject {
             AXValueGetValue(sizeRef as! AXValue, .cgSize, &size)
         }
 
+        // Get window title
+        var titleRef: CFTypeRef?
+        var windowTitle: String?
+        if AXUIElementCopyAttributeValue(mainWindow, kAXTitleAttribute as CFString, &titleRef) == .success {
+            windowTitle = titleRef as? String
+        }
+
         return WindowInfo(
             bundleIdentifier: bundleId,
             appName: app.name,
             x: Double(position.x),
             y: Double(position.y),
             width: Double(size.width),
-            height: Double(size.height)
+            height: Double(size.height),
+            windowTitle: windowTitle,
+            windowIndex: 0
         )
+    }
+
+    /// Captures ALL windows for an app (not just the main window)
+    func captureAllWindowPositions(for app: RunningApp) -> [WindowInfo] {
+        guard let bundleId = app.bundleIdentifier else { return [] }
+
+        let appElement = AXUIElementCreateApplication(app.id)
+
+        var windowsRef: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
+
+        guard result == .success,
+              let windows = windowsRef as? [AXUIElement] else {
+            return []
+        }
+
+        var windowInfos: [WindowInfo] = []
+
+        for (index, window) in windows.enumerated() {
+            var positionRef: CFTypeRef?
+            var sizeRef: CFTypeRef?
+
+            AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &positionRef)
+            AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeRef)
+
+            var position = CGPoint.zero
+            var size = CGSize.zero
+
+            if let positionRef = positionRef {
+                AXValueGetValue(positionRef as! AXValue, .cgPoint, &position)
+            }
+
+            if let sizeRef = sizeRef {
+                AXValueGetValue(sizeRef as! AXValue, .cgSize, &size)
+            }
+
+            // Skip tiny windows (toolbars, palettes, etc.) - require minimum 100px in both dimensions
+            if size.width < 100 || size.height < 100 {
+                continue
+            }
+
+            // Get window title
+            var titleRef: CFTypeRef?
+            var windowTitle: String?
+            if AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleRef) == .success {
+                windowTitle = titleRef as? String
+            }
+
+            let info = WindowInfo(
+                bundleIdentifier: bundleId,
+                appName: app.name,
+                x: Double(position.x),
+                y: Double(position.y),
+                width: Double(size.width),
+                height: Double(size.height),
+                windowTitle: windowTitle,
+                windowIndex: index
+            )
+
+            windowInfos.append(info)
+        }
+
+        return windowInfos
     }
 
     func captureSelectedApps() -> [WindowInfo] {
         var windowInfos: [WindowInfo] = []
 
         for app in runningApps where app.isSelected {
-            if let info = captureWindowPosition(for: app) {
-                windowInfos.append(info)
-            }
+            // Capture ALL windows for each selected app
+            let appWindows = captureAllWindowPositions(for: app)
+            windowInfos.append(contentsOf: appWindows)
         }
 
         return windowInfos
@@ -377,30 +535,88 @@ class WindowManager: ObservableObject {
     func updatePresetPositions(_ preset: Preset) {
         guard let index = presets.firstIndex(where: { $0.id == preset.id }) else { return }
 
-        // Recapture window positions for the apps in this preset
+        // Group existing windows by bundleIdentifier
+        var existingByApp: [String: [WindowInfo]] = [:]
+        for window in preset.windows {
+            existingByApp[window.bundleIdentifier, default: []].append(window)
+        }
+
+        // Recapture window positions for all apps in this preset
         var updatedWindows: [WindowInfo] = []
         let workspace = NSWorkspace.shared
 
-        for existingWindow in preset.windows {
-            // Find the running app matching this window's bundle ID
+        for (bundleId, existingWindows) in existingByApp {
+            // Find the running app matching this bundle ID
             if let app = workspace.runningApplications.first(where: {
-                $0.bundleIdentifier == existingWindow.bundleIdentifier
+                $0.bundleIdentifier == bundleId
             }) {
                 let runningApp = RunningApp(
                     id: app.processIdentifier,
-                    name: app.localizedName ?? existingWindow.appName,
+                    name: app.localizedName ?? existingWindows.first?.appName ?? "Unknown",
                     bundleIdentifier: app.bundleIdentifier,
                     icon: app.icon
                 )
-                if let newPosition = captureWindowPosition(for: runningApp) {
-                    updatedWindows.append(newPosition)
+
+                // Capture all current windows for this app
+                let currentWindows = captureAllWindowPositions(for: runningApp)
+
+                if currentWindows.isEmpty {
+                    // App is running but no windows - keep old positions
+                    updatedWindows.append(contentsOf: existingWindows)
                 } else {
-                    // App is running but couldn't capture - keep old position
-                    updatedWindows.append(existingWindow)
+                    // Match and update: for each existing window, find best match in current windows
+                    var usedCurrentIndices = Set<Int>()
+
+                    for existingWindow in existingWindows {
+                        var bestMatch: (index: Int, window: WindowInfo, score: Int)?
+
+                        for (i, current) in currentWindows.enumerated() {
+                            guard !usedCurrentIndices.contains(i) else { continue }
+
+                            var score = 0
+
+                            // Score by title match
+                            if let existingTitle = existingWindow.windowTitle,
+                               let currentTitle = current.windowTitle {
+                                if existingTitle == currentTitle {
+                                    score += 100
+                                } else if existingTitle.contains(currentTitle) || currentTitle.contains(existingTitle) {
+                                    score += 50
+                                }
+                            }
+
+                            // Score by index match
+                            if existingWindow.windowIndex == current.windowIndex {
+                                score += 30
+                            }
+
+                            if bestMatch == nil || score > bestMatch!.score {
+                                bestMatch = (i, current, score)
+                            }
+                        }
+
+                        if let match = bestMatch {
+                            usedCurrentIndices.insert(match.index)
+                            updatedWindows.append(match.window)
+                        } else {
+                            // Find any remaining unused window as fallback
+                            var foundFallback = false
+                            for (i, window) in currentWindows.enumerated() where !usedCurrentIndices.contains(i) {
+                                usedCurrentIndices.insert(i)
+                                updatedWindows.append(window)
+                                foundFallback = true
+                                break
+                            }
+                            if !foundFallback {
+                                // No more windows available - keep old position
+                                updatedWindows.append(existingWindow)
+                            }
+                        }
+                    }
                 }
             } else {
-                // App not running - keep old position
-                updatedWindows.append(existingWindow)
+                // App not running - keep old positions
+                updatedWindows.append(contentsOf: existingWindows)
             }
         }
 
@@ -411,13 +627,24 @@ class WindowManager: ObservableObject {
     func addWindowToPreset(_ preset: Preset, from app: RunningApp) {
         guard let index = presets.firstIndex(where: { $0.id == preset.id }) else { return }
 
-        // Don't add duplicates
-        guard !presets[index].windows.contains(where: { $0.bundleIdentifier == app.bundleIdentifier }) else { return }
+        // Capture all windows for this app
+        let newWindows = captureAllWindowPositions(for: app)
 
-        if let windowInfo = captureWindowPosition(for: app) {
-            presets[index].windows.append(windowInfo)
-            persistPresets()
+        for newWindow in newWindows {
+            // Check for exact duplicates (same position + same title)
+            let isDuplicate = presets[index].windows.contains { existing in
+                existing.bundleIdentifier == newWindow.bundleIdentifier &&
+                abs(existing.x - newWindow.x) < 10 &&
+                abs(existing.y - newWindow.y) < 10 &&
+                existing.windowTitle == newWindow.windowTitle
+            }
+
+            if !isDuplicate {
+                presets[index].windows.append(newWindow)
+            }
         }
+
+        persistPresets()
     }
 
     func removeWindowFromPreset(_ preset: Preset, window: WindowInfo) {
@@ -432,11 +659,17 @@ class WindowManager: ObservableObject {
             openLaunchItem(item)
         }
 
+        // Group windows by bundleIdentifier for batch processing
+        var windowsByApp: [String: [WindowInfo]] = [:]
+        for windowInfo in preset.windows {
+            windowsByApp[windowInfo.bundleIdentifier, default: []].append(windowInfo)
+        }
+
         // Small delay to let items open before positioning
         let delay = preset.launchItems.isEmpty ? 0.0 : 0.5
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            for windowInfo in preset.windows {
-                self.applyWindowPosition(windowInfo)
+            for (bundleId, windowInfos) in windowsByApp {
+                self.applyWindowPositions(bundleIdentifier: bundleId, windowInfos: windowInfos)
             }
         }
 
@@ -444,6 +677,186 @@ class WindowManager: ObservableObject {
         let itemCount = preset.launchItems.count
         let windowCount = preset.windows.count
         ToastWindow.show(presetName: preset.name, windowCount: windowCount, launchItemCount: itemCount)
+    }
+
+    /// Apply multiple window positions for a single app
+    private func applyWindowPositions(bundleIdentifier: String, windowInfos: [WindowInfo]) {
+        let workspace = NSWorkspace.shared
+
+        if let app = workspace.runningApplications.first(where: { $0.bundleIdentifier == bundleIdentifier }) {
+            // App is running - activate it first to unhide windows
+            app.activate()
+
+            // Give the app a moment to activate and show its window
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                self?.setWindowPositions(for: app, windowInfos: windowInfos)
+            }
+        } else {
+            // App is not running, launch it
+            launchApp(bundleIdentifier: bundleIdentifier) { [weak self] pid in
+                if let pid = pid {
+                    // Wait a moment for the app to create its window
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        if let app = workspace.runningApplications.first(where: { $0.processIdentifier == pid }) {
+                            self?.setWindowPositions(for: app, windowInfos: windowInfos)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Set positions for multiple windows of a single app
+    private func setWindowPositions(for app: NSRunningApplication, windowInfos: [WindowInfo], retryCount: Int = 0) {
+        let pid = app.processIdentifier
+        let appElement = AXUIElementCreateApplication(pid)
+
+        var windowsRef: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
+        let windows = windowsRef as? [AXUIElement] ?? []
+
+        // If no windows found, the app window might be closed - try to reopen it
+        if result != .success || windows.isEmpty {
+            if retryCount == 0 {
+                app.unhide()
+                app.activate()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                    self?.setWindowPositions(for: app, windowInfos: windowInfos, retryCount: 1)
+                }
+            } else if retryCount == 1 {
+                if let bundleId = app.bundleIdentifier,
+                   let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+                    let config = NSWorkspace.OpenConfiguration()
+                    config.activates = true
+                    NSWorkspace.shared.openApplication(at: url, configuration: config) { [weak self] _, _ in
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            self?.setWindowPositions(for: app, windowInfos: windowInfos, retryCount: 2)
+                        }
+                    }
+                }
+            } else if retryCount == 2 {
+                reopenAppWindow(bundleIdentifier: app.bundleIdentifier ?? "") { [weak self] in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        self?.positionMultipleWindows(pid: pid, windowInfos: windowInfos)
+                    }
+                }
+            }
+            return
+        }
+
+        positionMultipleWindows(pid: pid, windowInfos: windowInfos)
+    }
+
+    /// Position multiple windows for an app using score-based matching
+    private func positionMultipleWindows(pid: pid_t, windowInfos: [WindowInfo]) {
+        let appElement = AXUIElementCreateApplication(pid)
+
+        var windowsRef: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
+
+        guard result == .success,
+              let windows = windowsRef as? [AXUIElement],
+              !windows.isEmpty else {
+            #if DEBUG
+            if let info = windowInfos.first {
+                print("Could not position windows for \(info.appName): no windows found after all retries")
+            }
+            #endif
+            return
+        }
+
+        var usedIndices = Set<Int>()
+
+        for info in windowInfos {
+            // Find the best matching window that hasn't been used yet
+            if let match = findMatchingWindow(for: info, in: windows, usedIndices: usedIndices) {
+                usedIndices.insert(match.index)
+                positionSingleWindow(window: match.window, info: info, pid: pid)
+            } else if let fallbackWindow = findMainWindow(from: windows.enumerated().filter { !usedIndices.contains($0.offset) }.map { $0.element }) {
+                // Fallback: use main window if no match found (for legacy presets)
+                if let fallbackIndex = windows.firstIndex(where: { $0 == fallbackWindow }) {
+                    usedIndices.insert(fallbackIndex)
+                }
+                positionSingleWindow(window: fallbackWindow, info: info, pid: pid)
+            }
+        }
+    }
+
+    /// Position a single specific window
+    private func positionSingleWindow(window: AXUIElement, info: WindowInfo, pid: pid_t) {
+        // Get current window position and size for full-screen detection
+        var positionRef: CFTypeRef?
+        var sizeRef: CFTypeRef?
+        var windowPosition = CGPoint.zero
+        var windowSize = CGSize.zero
+        if AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &positionRef) == .success,
+           AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeRef) == .success {
+            AXValueGetValue(positionRef as! AXValue, .cgPoint, &windowPosition)
+            AXValueGetValue(sizeRef as! AXValue, .cgSize, &windowSize)
+        }
+
+        // Check if window is in full-screen mode
+        var isFullscreen = false
+
+        // Method 1: Check AXFullScreen attribute
+        var fullscreenRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(window, "AXFullScreen" as CFString, &fullscreenRef) == .success {
+            isFullscreen = (fullscreenRef as? Bool) ?? false
+        }
+
+        // Method 2: Check if window bounds match screen bounds (fallback detection)
+        if !isFullscreen {
+            for screen in NSScreen.screens {
+                let screenFrame = screen.frame
+                let isAtOrigin = windowPosition.x == screenFrame.origin.x && windowPosition.y == 0
+                let matchesScreenSize = abs(windowSize.width - screenFrame.size.width) < 2 &&
+                                       abs(windowSize.height - screenFrame.size.height) < 50
+                if isAtOrigin && matchesScreenSize {
+                    isFullscreen = true
+                    break
+                }
+            }
+        }
+
+        if isFullscreen {
+            // Activate the app first
+            if let app = NSRunningApplication(processIdentifier: pid) {
+                app.activate()
+            }
+
+            // Use CGEvent to send Cmd+Ctrl+F to exit full-screen
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                let keyCode: CGKeyCode = 3 // 'f' key
+                if let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true),
+                   let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false) {
+                    keyDown.flags = [.maskCommand, .maskControl]
+                    keyUp.flags = [.maskCommand, .maskControl]
+                    keyDown.post(tap: .cghidEventTap)
+                    keyUp.post(tap: .cghidEventTap)
+                }
+
+                // Wait for full-screen exit animation then position
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    self?.setWindowFrame(window: window, info: info)
+                }
+            }
+            return
+        }
+
+        // Check if window is minimized and unminimize it
+        var minimizedRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &minimizedRef) == .success {
+            if let minimized = minimizedRef as? Bool, minimized {
+                AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
+                // Wait for unminimize animation
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                    self?.setWindowFrame(window: window, info: info)
+                }
+                return
+            }
+        }
+
+        setWindowFrame(window: window, info: info)
     }
 
     private func openLaunchItem(_ item: LaunchItem) {
@@ -490,76 +903,6 @@ class WindowManager: ObservableObject {
         persistPresets()
     }
 
-    private func applyWindowPosition(_ info: WindowInfo) {
-        let workspace = NSWorkspace.shared
-
-        if let app = workspace.runningApplications.first(where: { $0.bundleIdentifier == info.bundleIdentifier }) {
-            // App is running - activate it first to unhide windows
-            app.activate()
-
-            // Give the app a moment to activate and show its window
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                self?.setWindowPosition(for: app, info: info)
-            }
-        } else {
-            // App is not running, launch it
-            launchApp(bundleIdentifier: info.bundleIdentifier) { [weak self] pid in
-                if let pid = pid {
-                    // Wait a moment for the app to create its window
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                        if let app = workspace.runningApplications.first(where: { $0.processIdentifier == pid }) {
-                            self?.setWindowPosition(for: app, info: info)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func setWindowPosition(for app: NSRunningApplication, info: WindowInfo, retryCount: Int = 0) {
-        let pid = app.processIdentifier
-        let appElement = AXUIElementCreateApplication(pid)
-
-        var windowsRef: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
-        let windows = windowsRef as? [AXUIElement] ?? []
-
-        // If no windows found, the app window might be closed - try to reopen it
-        if result != .success || windows.isEmpty {
-            if retryCount == 0 {
-                // First attempt: try unhide and activate
-                app.unhide()
-                app.activate()
-
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                    self?.setWindowPosition(for: app, info: info, retryCount: 1)
-                }
-            } else if retryCount == 1 {
-                // Second attempt: try to open the app again (this often reopens the main window)
-                if let bundleId = app.bundleIdentifier,
-                   let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
-                    let config = NSWorkspace.OpenConfiguration()
-                    config.activates = true
-                    NSWorkspace.shared.openApplication(at: url, configuration: config) { [weak self] _, _ in
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                            self?.setWindowPosition(for: app, info: info, retryCount: 2)
-                        }
-                    }
-                }
-            } else if retryCount == 2 {
-                // Third attempt: try AppleScript to tell the app to reopen
-                reopenAppWindow(bundleIdentifier: app.bundleIdentifier ?? "") { [weak self] in
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        self?.positionWindow(pid: pid, info: info)
-                    }
-                }
-            }
-            return
-        }
-
-        positionWindow(pid: pid, info: info)
-    }
-
     private func reopenAppWindow(bundleIdentifier: String, completion: @escaping () -> Void) {
         // Use AppleScript to tell the app to reopen/activate
         let script = """
@@ -580,96 +923,6 @@ class WindowManager: ObservableObject {
             }
         }
         completion()
-    }
-
-    private func positionWindow(pid: pid_t, info: WindowInfo) {
-        let appElement = AXUIElementCreateApplication(pid)
-
-        var windowsRef: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
-
-        guard result == .success,
-              let windows = windowsRef as? [AXUIElement],
-              let firstWindow = findMainWindow(from: windows) else {
-            #if DEBUG
-            print("Could not position window for \(info.appName): no windows found after all retries")
-            #endif
-            return
-        }
-
-        // Get current window position and size for full-screen detection
-        var positionRef: CFTypeRef?
-        var sizeRef: CFTypeRef?
-        var windowPosition = CGPoint.zero
-        var windowSize = CGSize.zero
-        if AXUIElementCopyAttributeValue(firstWindow, kAXPositionAttribute as CFString, &positionRef) == .success,
-           AXUIElementCopyAttributeValue(firstWindow, kAXSizeAttribute as CFString, &sizeRef) == .success {
-            AXValueGetValue(positionRef as! AXValue, .cgPoint, &windowPosition)
-            AXValueGetValue(sizeRef as! AXValue, .cgSize, &windowSize)
-        }
-
-        // Check if window is in full-screen mode
-        var isFullscreen = false
-
-        // Method 1: Check AXFullScreen attribute
-        var fullscreenRef: CFTypeRef?
-        if AXUIElementCopyAttributeValue(firstWindow, "AXFullScreen" as CFString, &fullscreenRef) == .success {
-            isFullscreen = (fullscreenRef as? Bool) ?? false
-        }
-
-        // Method 2: Check if window bounds match screen bounds (fallback detection)
-        if !isFullscreen {
-            for screen in NSScreen.screens {
-                let screenFrame = screen.frame
-                let isAtOrigin = windowPosition.x == screenFrame.origin.x && windowPosition.y == 0
-                let matchesScreenSize = abs(windowSize.width - screenFrame.size.width) < 2 &&
-                                       abs(windowSize.height - screenFrame.size.height) < 50
-                if isAtOrigin && matchesScreenSize {
-                    isFullscreen = true
-                    break
-                }
-            }
-        }
-
-        if isFullscreen {
-            // Activate the app first
-            if let app = NSRunningApplication(processIdentifier: pid) {
-                app.activate()
-            }
-
-            // Use CGEvent to send Cmd+Ctrl+F to exit full-screen
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                let keyCode: CGKeyCode = 3 // 'f' key
-                if let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true),
-                   let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false) {
-                    keyDown.flags = [.maskCommand, .maskControl]
-                    keyUp.flags = [.maskCommand, .maskControl]
-                    keyDown.post(tap: .cghidEventTap)
-                    keyUp.post(tap: .cghidEventTap)
-                }
-            }
-
-            // Wait for full-screen exit animation
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-                self?.positionWindow(pid: pid, info: info)
-            }
-            return
-        }
-
-        // Check if window is minimized and unminimize it
-        var minimizedRef: CFTypeRef?
-        if AXUIElementCopyAttributeValue(firstWindow, kAXMinimizedAttribute as CFString, &minimizedRef) == .success {
-            if let minimized = minimizedRef as? Bool, minimized {
-                AXUIElementSetAttributeValue(firstWindow, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
-                // Wait for unminimize animation
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                    self?.setWindowFrame(window: firstWindow, info: info)
-                }
-                return
-            }
-        }
-
-        setWindowFrame(window: firstWindow, info: info)
     }
 
     private func setWindowFrame(window: AXUIElement, info: WindowInfo) {

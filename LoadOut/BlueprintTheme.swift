@@ -306,44 +306,133 @@ struct BlueprintSecondaryButton: ButtonStyle {
     }
 }
 
-// MARK: - Screen Preview (Mini window layout visualization)
+// MARK: - Screen Configuration
 
-struct ScreenPreviewView: View {
+/// Represents the current display configuration
+struct ScreenConfiguration {
+    let screens: [ScreenInfo]
+    let unifiedBounds: CGRect  // Bounding box containing all screens in accessibility coordinates
+
+    struct ScreenInfo: Identifiable {
+        let id: Int
+        let frame: CGRect      // In accessibility coordinates (top-left origin)
+        let isMain: Bool
+    }
+
+    /// Get the current screen configuration
+    static var current: ScreenConfiguration {
+        let nsScreens = NSScreen.screens
+        guard !nsScreens.isEmpty else {
+            return ScreenConfiguration(
+                screens: [],
+                unifiedBounds: CGRect(x: 0, y: 0, width: 1920, height: 1080)
+            )
+        }
+
+        // Get the main screen height for coordinate conversion
+        let mainScreenHeight = nsScreens.first?.frame.height ?? 1080
+
+        var screenInfos: [ScreenInfo] = []
+        var minX: CGFloat = .infinity
+        var minY: CGFloat = .infinity
+        var maxX: CGFloat = -.infinity
+        var maxY: CGFloat = -.infinity
+
+        for (index, screen) in nsScreens.enumerated() {
+            let nsFrame = screen.frame
+
+            // Convert from NSScreen coordinates (bottom-left origin) to
+            // Accessibility coordinates (top-left origin)
+            let accessibilityFrame = CGRect(
+                x: nsFrame.origin.x,
+                y: mainScreenHeight - nsFrame.origin.y - nsFrame.height,
+                width: nsFrame.width,
+                height: nsFrame.height
+            )
+
+            screenInfos.append(ScreenInfo(
+                id: index,
+                frame: accessibilityFrame,
+                isMain: screen == NSScreen.main
+            ))
+
+            // Track unified bounds
+            minX = min(minX, accessibilityFrame.minX)
+            minY = min(minY, accessibilityFrame.minY)
+            maxX = max(maxX, accessibilityFrame.maxX)
+            maxY = max(maxY, accessibilityFrame.maxY)
+        }
+
+        let unifiedBounds = CGRect(
+            x: minX,
+            y: minY,
+            width: maxX - minX,
+            height: maxY - minY
+        )
+
+        return ScreenConfiguration(screens: screenInfos, unifiedBounds: unifiedBounds)
+    }
+}
+
+// MARK: - Multi-Screen Preview View
+
+struct MultiScreenPreviewView: View {
     let windows: [WindowInfo]
-    let screenBounds: CGRect
+    let config: ScreenConfiguration
 
     init(windows: [WindowInfo]) {
         self.windows = windows
-        // Get main screen bounds for scaling
-        if let screen = NSScreen.main {
-            self.screenBounds = screen.frame
-        } else {
-            self.screenBounds = CGRect(x: 0, y: 0, width: 1920, height: 1080)
-        }
+        self.config = ScreenConfiguration.current
     }
 
     var body: some View {
         GeometryReader { geometry in
+            let bounds = config.unifiedBounds
             let scale = min(
-                geometry.size.width / screenBounds.width,
-                geometry.size.height / screenBounds.height
-            ) * 0.9
+                geometry.size.width / bounds.width,
+                geometry.size.height / bounds.height
+            ) * 0.85
+
+            let offsetX = (geometry.size.width - bounds.width * scale) / 2 - bounds.minX * scale
+            let offsetY = (geometry.size.height - bounds.height * scale) / 2 - bounds.minY * scale
 
             ZStack {
-                // Screen outline
-                RoundedRectangle(cornerRadius: 4)
-                    .stroke(Color.blueprintCyan.opacity(0.3), lineWidth: 1)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.blueprintDeep)
-                    )
+                // Draw each screen
+                ForEach(config.screens) { screen in
+                    let screenX = screen.frame.minX * scale + offsetX
+                    let screenY = screen.frame.minY * scale + offsetY
+                    let screenW = screen.frame.width * scale
+                    let screenH = screen.frame.height * scale
 
-                // Window rectangles
+                    // Screen background and outline
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.blueprintDeep)
+                        .frame(width: screenW, height: screenH)
+                        .position(x: screenX + screenW / 2, y: screenY + screenH / 2)
+
+                    RoundedRectangle(cornerRadius: 3)
+                        .stroke(
+                            screen.isMain ? Color.blueprintCyan.opacity(0.5) : Color.blueprintCyan.opacity(0.25),
+                            lineWidth: screen.isMain ? 1 : 0.5
+                        )
+                        .frame(width: screenW, height: screenH)
+                        .position(x: screenX + screenW / 2, y: screenY + screenH / 2)
+
+                    // Screen label for multi-monitor
+                    if config.screens.count > 1 {
+                        Text(screen.isMain ? "Main" : "\(screen.id + 1)")
+                            .font(BlueprintFont.mono(8))
+                            .foregroundColor(.blueprintTextDim)
+                            .position(x: screenX + 16, y: screenY + 10)
+                    }
+                }
+
+                // Draw windows on top of screens
                 ForEach(windows) { window in
-                    let scaledX = CGFloat(window.x) * scale + (geometry.size.width - screenBounds.width * scale) / 2
-                    let scaledY = CGFloat(window.y) * scale + (geometry.size.height - screenBounds.height * scale) / 2
-                    let scaledW = CGFloat(window.width) * scale
-                    let scaledH = CGFloat(window.height) * scale
+                    let windowX = CGFloat(window.x) * scale + offsetX
+                    let windowY = CGFloat(window.y) * scale + offsetY
+                    let windowW = CGFloat(window.width) * scale
+                    let windowH = CGFloat(window.height) * scale
 
                     RoundedRectangle(cornerRadius: 2)
                         .fill(Color.blueprintCyan.opacity(0.15))
@@ -351,15 +440,26 @@ struct ScreenPreviewView: View {
                             RoundedRectangle(cornerRadius: 2)
                                 .stroke(Color.blueprintCyan.opacity(0.6), lineWidth: 1)
                         )
-                        .frame(width: scaledW, height: scaledH)
-                        .position(x: scaledX + scaledW / 2, y: scaledY + scaledH / 2)
+                        .frame(width: windowW, height: windowH)
+                        .position(x: windowX + windowW / 2, y: windowY + windowH / 2)
                 }
-
-                // Corner markers
-                CornerMarkers()
-                    .stroke(Color.blueprintCyan.opacity(0.2), lineWidth: 0.5)
             }
         }
+    }
+}
+
+// MARK: - Screen Preview (Mini window layout visualization)
+
+struct ScreenPreviewView: View {
+    let windows: [WindowInfo]
+
+    init(windows: [WindowInfo]) {
+        self.windows = windows
+    }
+
+    var body: some View {
+        // Use multi-screen preview to properly handle all display configurations
+        MultiScreenPreviewView(windows: windows)
     }
 }
 
