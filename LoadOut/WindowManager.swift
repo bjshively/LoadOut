@@ -737,25 +737,14 @@ class WindowManager: ObservableObject {
             } else if retryCount == 2 {
                 reopenAppWindow(bundleIdentifier: app.bundleIdentifier ?? "") { [weak self] in
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        self?.positionMultipleWindows(pid: pid, windowInfos: windowInfos)
+                        self?.positionMultipleWindows(for: app, windowInfos: windowInfos)
                     }
                 }
             }
             return
         }
 
-        // Check if we need to create additional windows
-        let neededWindows = windowInfos.count
-        let existingWindows = windows.count
-
-        if existingWindows < neededWindows {
-            // Create additional windows using Cmd+N
-            createAdditionalWindows(for: app, count: neededWindows - existingWindows) { [weak self] in
-                self?.positionMultipleWindows(pid: pid, windowInfos: windowInfos)
-            }
-        } else {
-            positionMultipleWindows(pid: pid, windowInfos: windowInfos)
-        }
+        positionMultipleWindows(for: app, windowInfos: windowInfos)
     }
 
     /// Create additional windows for an app using Cmd+N keyboard simulation
@@ -805,7 +794,41 @@ class WindowManager: ObservableObject {
     }
 
     /// Position multiple windows for an app using score-based matching
-    private func positionMultipleWindows(pid: pid_t, windowInfos: [WindowInfo]) {
+    /// Creates additional windows if needed to match the preset
+    private func positionMultipleWindows(for app: NSRunningApplication, windowInfos: [WindowInfo]) {
+        let pid = app.processIdentifier
+        let appElement = AXUIElementCreateApplication(pid)
+
+        var windowsRef: CFTypeRef?
+        _ = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
+        let windows = (windowsRef as? [AXUIElement]) ?? []
+
+        // Filter to only count "real" windows (not tiny toolbars/palettes)
+        let realWindows = windows.filter { window in
+            var sizeRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeRef) == .success {
+                var size = CGSize.zero
+                AXValueGetValue(sizeRef as! AXValue, .cgSize, &size)
+                return size.width >= 100 && size.height >= 100
+            }
+            return true // Include if we can't determine size
+        }
+
+        let neededWindows = windowInfos.count
+        let existingWindows = realWindows.count
+
+        if existingWindows < neededWindows {
+            // Create additional windows using Cmd+N, then position all
+            createAdditionalWindows(for: app, count: neededWindows - existingWindows) { [weak self] in
+                self?.doPositionWindows(pid: pid, windowInfos: windowInfos)
+            }
+        } else {
+            doPositionWindows(pid: pid, windowInfos: windowInfos)
+        }
+    }
+
+    /// Actually position windows after ensuring we have enough of them
+    private func doPositionWindows(pid: pid_t, windowInfos: [WindowInfo]) {
         let appElement = AXUIElementCreateApplication(pid)
 
         var windowsRef: CFTypeRef?
