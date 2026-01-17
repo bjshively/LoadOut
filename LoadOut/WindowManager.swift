@@ -744,7 +744,64 @@ class WindowManager: ObservableObject {
             return
         }
 
-        positionMultipleWindows(pid: pid, windowInfos: windowInfos)
+        // Check if we need to create additional windows
+        let neededWindows = windowInfos.count
+        let existingWindows = windows.count
+
+        if existingWindows < neededWindows {
+            // Create additional windows using Cmd+N
+            createAdditionalWindows(for: app, count: neededWindows - existingWindows) { [weak self] in
+                self?.positionMultipleWindows(pid: pid, windowInfos: windowInfos)
+            }
+        } else {
+            positionMultipleWindows(pid: pid, windowInfos: windowInfos)
+        }
+    }
+
+    /// Create additional windows for an app using Cmd+N keyboard simulation
+    private func createAdditionalWindows(for app: NSRunningApplication, count: Int, completion: @escaping () -> Void) {
+        guard count > 0 else {
+            completion()
+            return
+        }
+
+        // Activate the app first
+        app.activate()
+
+        // Send Cmd+N for each additional window needed, with delays between
+        var windowsCreated = 0
+
+        func createNextWindow() {
+            guard windowsCreated < count else {
+                // Wait a moment for windows to fully initialize, then complete
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    completion()
+                }
+                return
+            }
+
+            // Send Cmd+N to create a new window
+            let keyCode: CGKeyCode = 45 // 'n' key
+            if let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true),
+               let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false) {
+                keyDown.flags = .maskCommand
+                keyUp.flags = .maskCommand
+                keyDown.post(tap: .cghidEventTap)
+                keyUp.post(tap: .cghidEventTap)
+            }
+
+            windowsCreated += 1
+
+            // Wait for the window to be created before creating the next one
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                createNextWindow()
+            }
+        }
+
+        // Start creating windows after a brief delay to ensure app is active
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            createNextWindow()
+        }
     }
 
     /// Position multiple windows for an app using score-based matching
