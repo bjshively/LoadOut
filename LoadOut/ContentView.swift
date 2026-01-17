@@ -720,6 +720,14 @@ struct BlueprintSettingsSheet: View {
                         icon: "menubar.rectangle",
                         isOn: $windowManager.hideDockIcon
                     )
+
+                    // Auto Check for Updates
+                    BlueprintSettingsToggle(
+                        title: "AUTO-UPDATE",
+                        description: "Automatically check for updates",
+                        icon: "arrow.triangle.2.circlepath",
+                        isOn: $windowManager.autoCheckForUpdates
+                    )
                 }
 
                 Spacer()
@@ -749,7 +757,7 @@ struct BlueprintSettingsSheet: View {
             .padding(.horizontal, 28)
             .padding(.vertical, 24)
         }
-        .frame(width: 340, height: 300)
+        .frame(width: 340, height: 360)
     }
 }
 

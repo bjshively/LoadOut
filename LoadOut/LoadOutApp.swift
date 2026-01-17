@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Combine
+import Sparkle
 
 @main
 struct LoadOutApp: App {
@@ -27,8 +28,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var globalMonitor: Any?
     private var localMonitor: Any?
 
+    // Sparkle updater controller
+    let updaterController: SPUStandardUpdaterController
+
+    override init() {
+        // Initialize Sparkle before super.init()
+        updaterController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+        super.init()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
-        menuBarController = MenuBarController(windowManager: windowManager)
+        menuBarController = MenuBarController(windowManager: windowManager, updaterController: updaterController)
 
         // Update menu when presets change
         windowManager.$presets

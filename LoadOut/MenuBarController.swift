@@ -7,6 +7,7 @@
 
 import AppKit
 import SwiftUI
+import Sparkle
 
 extension Notification.Name {
     static let openMainWindow = Notification.Name("openMainWindow")
@@ -16,9 +17,11 @@ class MenuBarController {
     private var statusItem: NSStatusItem?
     private var windowManager: WindowManager
     private var mainWindow: NSWindow?
+    private var updaterController: SPUStandardUpdaterController
 
-    init(windowManager: WindowManager) {
+    init(windowManager: WindowManager, updaterController: SPUStandardUpdaterController) {
         self.windowManager = windowManager
+        self.updaterController = updaterController
         setupMenuBar()
     }
 
@@ -97,6 +100,17 @@ class MenuBarController {
 
         menu.addItem(NSMenuItem.separator())
 
+        // Check for Updates
+        let updateItem = NSMenuItem(
+            title: "Check for Updates...",
+            action: #selector(checkForUpdates),
+            keyEquivalent: ""
+        )
+        updateItem.target = self
+        menu.addItem(updateItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         // Quit
         let quitItem = NSMenuItem(
             title: "Quit LoadOut",
@@ -107,6 +121,10 @@ class MenuBarController {
         menu.addItem(quitItem)
 
         statusItem?.menu = menu
+    }
+
+    @objc private func checkForUpdates() {
+        updaterController.checkForUpdates(nil)
     }
 
     @objc private func applyPreset(_ sender: NSMenuItem) {
