@@ -7,7 +7,9 @@
 
 import AppKit
 import SwiftUI
+#if !APP_STORE
 import Sparkle
+#endif
 
 extension Notification.Name {
     static let openMainWindow = Notification.Name("openMainWindow")
@@ -17,13 +19,20 @@ class MenuBarController {
     private var statusItem: NSStatusItem?
     private var windowManager: WindowManager
     private var mainWindow: NSWindow?
-    private var updaterController: SPUStandardUpdaterController
+    #if !APP_STORE
+    private var updaterController: SPUStandardUpdaterController?
 
     init(windowManager: WindowManager, updaterController: SPUStandardUpdaterController) {
         self.windowManager = windowManager
         self.updaterController = updaterController
         setupMenuBar()
     }
+    #else
+    init(windowManager: WindowManager) {
+        self.windowManager = windowManager
+        setupMenuBar()
+    }
+    #endif
 
     private func createMainWindow() -> NSWindow {
         let contentView = ContentView(windowManager: windowManager)
@@ -98,9 +107,10 @@ class MenuBarController {
         openItem.target = self
         menu.addItem(openItem)
 
+        #if !APP_STORE
         menu.addItem(NSMenuItem.separator())
 
-        // Check for Updates
+        // Check for Updates (only for direct distribution)
         let updateItem = NSMenuItem(
             title: "Check for Updates...",
             action: #selector(checkForUpdates),
@@ -108,6 +118,7 @@ class MenuBarController {
         )
         updateItem.target = self
         menu.addItem(updateItem)
+        #endif
 
         menu.addItem(NSMenuItem.separator())
 
@@ -123,9 +134,11 @@ class MenuBarController {
         statusItem?.menu = menu
     }
 
+    #if !APP_STORE
     @objc private func checkForUpdates() {
-        updaterController.checkForUpdates(nil)
+        updaterController?.checkForUpdates(nil)
     }
+    #endif
 
     @objc private func applyPreset(_ sender: NSMenuItem) {
         guard let preset = sender.representedObject as? Preset else { return }

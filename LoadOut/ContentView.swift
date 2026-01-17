@@ -721,13 +721,15 @@ struct BlueprintSettingsSheet: View {
                         isOn: $windowManager.hideDockIcon
                     )
 
-                    // Auto Check for Updates
+                    #if !APP_STORE
+                    // Auto Check for Updates (only for direct distribution)
                     BlueprintSettingsToggle(
                         title: "AUTO-UPDATE",
                         description: "Automatically check for updates",
                         icon: "arrow.triangle.2.circlepath",
                         isOn: $windowManager.autoCheckForUpdates
                     )
+                    #endif
                 }
 
                 Spacer()

@@ -182,24 +182,28 @@ class WindowManager: ObservableObject {
         }
     }
 
+    #if !APP_STORE
     @Published var autoCheckForUpdates: Bool {
         didSet {
             UserDefaults.standard.set(autoCheckForUpdates, forKey: autoCheckForUpdatesKey)
         }
     }
+    private let autoCheckForUpdatesKey = "SUEnableAutomaticChecks"  // Sparkle's standard key
+    #endif
 
     private let presetsKey = "savedPresets"
     private let hideDockIconKey = "hideDockIcon"
     private let hasSeenOnboardingKey = "hasSeenOnboarding"
-    private let autoCheckForUpdatesKey = "SUEnableAutomaticChecks"  // Sparkle's standard key
 
     init() {
         // Load settings before other initialization
         self.hideDockIcon = UserDefaults.standard.bool(forKey: hideDockIconKey)
         self.hasSeenOnboarding = UserDefaults.standard.bool(forKey: hasSeenOnboardingKey)
         self.launchAtLogin = SMAppService.mainApp.status == .enabled
+        #if !APP_STORE
         // Default to true for auto-updates if not set
         self.autoCheckForUpdates = UserDefaults.standard.object(forKey: "SUEnableAutomaticChecks") as? Bool ?? true
+        #endif
 
         checkAccessibilityPermissions()
         loadPresets()
