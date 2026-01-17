@@ -50,6 +50,10 @@ struct ContentView: View {
                     if !windowManager.accessibilityEnabled {
                         AccessibilityWarningBanner {
                             windowManager.checkAccessibilityPermissions()
+                            // Refresh apps list now that we may have permission
+                            if windowManager.accessibilityEnabled {
+                                windowManager.refreshRunningApps()
+                            }
                         }
                     }
 
