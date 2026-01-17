@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <channel>
+        <title>LoadOut Updates</title>
+        <link>https://bjshively.github.io/LoadOut/appcast.xml</link>
+        <description>Most recent updates to LoadOut</description>
+        <language>en</language>
+
+        <!-- Add new versions above this comment -->
+        <!--
+        <item>
+            <title>Version 1.0</title>
+            <sparkle:version>1</sparkle:version>
+            <sparkle:shortVersionString>1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <pubDate>Sat, 18 Jan 2025 12:00:00 +0000</pubDate>
+            <enclosure
+                url="https://github.com/bjshively/LoadOut/releases/download/v1.0/LoadOut.zip"
+                sparkle:edSignature="YOUR_ED_SIGNATURE_HERE"
+                length="FILE_SIZE_IN_BYTES"
+                type="application/octet-stream"/>
+            <description><![CDATA[
+                <h2>Initial Release</h2>
+                <ul>
+                    <li>Save and restore window layouts</li>
+                    <li>Global keyboard shortcuts (Ctrl+Opt+1-9)</li>
+                    <li>Multi-display support</li>
+                    <li>Launch items with presets</li>
+                </ul>
+            ]]></description>
+        </item>
+        -->
+
+    </channel>
+</rss>
